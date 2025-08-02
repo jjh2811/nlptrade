@@ -1,0 +1,322 @@
+import json
+import logging
+import re
+from dataclasses import dataclass
+from typing import Optional, Dict, List, Any
+from pathlib import Path
+
+import unicodedata
+from rapidfuzz import fuzz
+import ccxt
+from mecab import MeCab
+from .portfolio import PortfolioManager
+
+# MeCab 객체 초기화
+mecab = MeCab()
+
+# 로깅 설정
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+@dataclass
+class TradeCommand:
+    intent: str  # "buy" or "sell"
+    coin: str  # e.g., "BTC", "ETH" (영문 심볼로 통일)
+    amount: Optional[float]  # 거래 수량
+    price: Optional[float]  # 지정가 가격 (시장가의 경우 None)
+    order_type: str  # "market" or "limit"
+
+def clean_text(text: str) -> str:
+    """유효하지 않은 Unicode 문자를 제거하거나 대체"""
+    # 유니코드 정규화 (NFKC: 호환성 문자 처리)
+    text = unicodedata.normalize('NFKC', text)
+    # 유효하지 않은 문자 (surrogate 등) 제거
+    text = ''.join(c for c in text if c.isprintable() and ord(c) < 0x10000)
+    return text
+
+class EntityExtractor:
+    def __init__(self, config: Dict[str, Any]):
+        self.coins: List[str] = config.get("coins", [])
+        self.intent_map: Dict[str, str] = config.get("intent_map", {})
+        self.fuzzy_threshold: int = config.get("fuzzy_threshold", 80)
+        self.custom_mapping: Dict[str, str] = config.get("custom_mapping", {})
+
+    def find_closest_symbol(self, input_symbol: str) -> Optional[str]:
+        """입력된 심볼과 가장 유사한 심볼을 찾음"""
+        if not input_symbol:
+            return None
+
+        # 대문자로 변환하여 일관성 유지
+        input_symbol = input_symbol.upper()
+
+        if input_symbol in self.coins:
+            return input_symbol
+        if input_symbol in self.custom_mapping:
+            logging.info(f"Custom mapping found: {input_symbol} -> {self.custom_mapping[input_symbol]}")
+            return self.custom_mapping[input_symbol]
+
+        max_ratio = 0
+        closest_symbol = None
+        for symbol in self.coins:
+            ratio = fuzz.WRatio(input_symbol, symbol)
+            if ratio > max_ratio and ratio >= self.fuzzy_threshold:
+                max_ratio = ratio
+                closest_symbol = symbol
+
+        if closest_symbol:
+            # 추가적인 검증 로직: 'BAI' -> 'A' 와 같이, 길이 차이가 크고 매칭된 심볼이 매우 짧은 경우의 오류를 방지.
+            # 1. 입력과 찾은 심볼의 길이 차이가 2 이상이고,
+            # 2. 찾은 심볼의 길이가 2 이하인 경우, 잘못된 매칭으로 간주.
+            len_diff = abs(len(input_symbol) - len(closest_symbol))
+            if len_diff >= 2 and len(closest_symbol) <= 2:
+                logging.warning(
+                    f"Fuzzy match for '{input_symbol}' -> '{closest_symbol}' (ratio: {max_ratio}) rejected due to "
+                    f"significant length difference with a very short symbol."
+                )
+                return None  # 매칭 거부
+
+            logging.info(f"Fuzzy matching: '{input_symbol}' -> '{closest_symbol}' (ratio: {max_ratio})")
+        return closest_symbol
+
+    def _extract_intent(self, text: str) -> Optional[str]:
+        """텍스트에서 거래 의도(매수/매도)를 추출"""
+        # MeCab이 '사줘' -> ['사', '줘']로 분리하여 기존 로직에서 매칭이 어려운 문제 해결
+        # 간단한 명령어에서는 키워드 검색이 더 안정적임
+        for keyword, intent in self.intent_map.items():
+            if keyword in text:
+                logging.info(f"Intent matched: '{keyword}' in text -> '{intent}'")
+                return intent
+        return None
+
+    def _extract_coin(self, text: str) -> Optional[str]:
+        """텍스트에서 코인 심볼 또는 한글 이름(별칭)을 추출"""
+        # 1. 영문 심볼 우선 추출 (e.g., BTC, ETH)
+        # SUSHIDOWN, 1000SATS 등 더 길거나 숫자가 포함된 심볼을 처리하도록 정규식 수정
+        symbol_pattern = r'\b[A-Z0-9]{2,12}\b'
+        symbol_match = re.search(symbol_pattern, text.upper())
+        if symbol_match:
+            input_symbol = symbol_match.group(0)
+            found_coin = self.find_closest_symbol(input_symbol)
+            if found_coin:
+                return found_coin
+
+        # 2. 영문 심볼이 없는 경우, 등록된 한글/커스텀 매핑 키워드 검색
+        # 긴 이름부터 매칭해야 '비트코인 캐시'와 '비트코인'을 구분할 수 있음
+        sorted_custom_keys = sorted(self.custom_mapping.keys(), key=len, reverse=True)
+        for coin_name in sorted_custom_keys:
+            if coin_name in text:
+                # custom_mapping에 있는 키는 find_closest_symbol에서 바로 찾아줌
+                return self.find_closest_symbol(coin_name)
+
+        # 3. 등록되지 않은 한글 이름의 경우, MeCab으로 명사를 추출하여 fuzzy matching 시도
+        tokens = mecab.pos(text)
+        logging.debug(f"Tokens for coin extraction: {tokens}")
+        for token, pos in tokens:
+            # 고유명사(NNP) 또는 일반명사(NNG)를 코인 이름 후보로 간주
+            if pos.startswith('NN'): # NNP, NNG 등 명사류
+                # 일반적인 거래 단위 등은 제외
+                if token in ['개', '달러', '시장가', '지정가']:
+                    continue
+                found_coin = self.find_closest_symbol(token)
+                if found_coin:
+                    return found_coin
+        return None
+
+    def _extract_amount(self, text: str) -> Optional[float]:
+        """텍스트에서 거래 수량을 추출"""
+        amount_match = re.search(r'(\d+(?:\.\d+)?)\s*개', text)
+        if amount_match:
+            return float(amount_match.group(1))
+        return None
+
+    def _extract_price(self, text: str) -> Optional[float]:
+        """텍스트에서 지정가 가격을 추출"""
+        price_match = re.search(r'(\d+(?:\.\d+)?)\s*달러', text)
+        if price_match:
+            return float(price_match.group(1))
+        return None
+
+    def _extract_relative_amount(self, text: str) -> Optional[Dict[str, Any]]:
+        """텍스트에서 '전부', '절반', '20%' 같은 상대적 수량을 추출"""
+        # 키워드 기반 추출
+        if '전부' in text or '전량' in text:
+            return {'type': 'percentage', 'value': 100.0}
+        if '절반' in text or '반' in text:
+            return {'type': 'percentage', 'value': 50.0}
+
+        # 퍼센트 기반 추출
+        percentage_match = re.search(r'(\d+\.?\d*)\s*(%|퍼센트)', text)
+        if percentage_match:
+            return {'type': 'percentage', 'value': float(percentage_match.group(1))}
+        return None
+
+    def extract_entities(self, text: str) -> Dict[str, Any]:
+        """주어진 텍스트에서 거래 관련 모든 엔터티를 추출"""
+        clean_input = clean_text(text)
+        logging.info(f"Original text: '{text}', Cleaned text: '{clean_input}'")
+
+        entities: Dict[str, Any] = {
+            "intent": self._extract_intent(clean_input),
+            "coin": self._extract_coin(clean_input),
+            "amount": self._extract_amount(clean_input),
+            "price": self._extract_price(clean_input),
+            "relative_amount": self._extract_relative_amount(clean_input),
+            "order_type": "market"
+        }
+
+        # 절대적 수량이 명시된 경우, 상대적 수량은 무시
+        if entities["amount"] is not None:
+            entities["relative_amount"] = None
+
+        if entities["price"] is not None:
+            entities["order_type"] = "limit"
+
+        return entities
+
+class TradeCommandParser:
+    def __init__(self, extractor: EntityExtractor, portfolio_manager: PortfolioManager):
+        """
+        TradeCommandParser를 초기화합니다.
+
+        Args:
+            extractor: 엔터티 추출을 담당하는 EntityExtractor 객체.
+            portfolio_manager: 포트폴리오 관리를 담당하는 PortfolioManager 객체.
+        """
+        self.extractor = extractor
+        self.portfolio_manager = portfolio_manager
+
+    def parse(self, text: str) -> Optional[TradeCommand]:
+        """주어진 텍스트를 파싱하여 TradeCommand 객체로 변환합니다."""
+        entities = self.extractor.extract_entities(text)
+
+        # 필수 엔터티 검증
+        if not entities["intent"] or not entities["coin"]:
+            logging.warning(
+                f"Parse failed for text: '{text}'. "
+                f"Missing intent ('{entities['intent']}') or coin ('{entities['coin']}')."
+            )
+            return None
+
+        final_amount = entities.get("amount")
+
+        # 상대적 수량이 감지된 경우, 실제 수량으로 변환
+        relative_amount_info = entities.get("relative_amount")
+        if relative_amount_info:
+            coin_symbol = str(entities["coin"])
+            current_holding = self.portfolio_manager.get_coin_amount(coin_symbol)
+
+            if current_holding is None or current_holding <= 0:
+                logging.warning(f"상대 수량을 처리할 수 없습니다. '{coin_symbol}'의 보유량이 없거나 잔고 조회에 실패했습니다.")
+                return None
+
+            percentage = relative_amount_info.get('value')
+            if percentage is not None:
+                calculated_amount = current_holding * (percentage / 100.0)
+                final_amount = calculated_amount
+                logging.info(f"계산된 수량: {percentage}% of {current_holding} {coin_symbol} -> {final_amount} {coin_symbol}")
+
+        # 계산된 최종 수량이 0 이하인 경우 거래 중단
+        if final_amount is not None and final_amount <= 0:
+            logging.warning(f"계산된 거래 수량이 0 이하({final_amount})이므로 거래를 진행할 수 없습니다.")
+            return None
+
+        return TradeCommand(
+            intent=str(entities["intent"]),
+            coin=str(entities["coin"]),
+            amount=final_amount,
+            price=entities.get("price"),
+            order_type=str(entities["order_type"])
+        )
+
+class TradeExecutor:
+    """
+    TradeCommand를 실행합니다.
+    참고: 이 클래스는 실제 거래소 API와 연동하는 로직이 들어갈 위치의 예시입니다.
+    """
+    def execute(self, command: TradeCommand) -> Dict:
+        """주어진 명령을 실행하고 결과를 JSON 호환 딕셔너리로 반환합니다."""
+        logging.info(f"Executing command: {command}")
+        result = {
+            "status": "success",
+            "command_executed": command.__dict__
+        }
+        return result
+
+def load_config(config_path: Path) -> Dict[str, Any]:
+    """설정 파일을 로드합니다."""
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        logging.error(f"설정 파일을 찾을 수 없습니다: {config_path}")
+        raise
+    except json.JSONDecodeError:
+        logging.error(f"설정 파일의 형식이 올바르지 않습니다: {config_path}")
+        raise
+
+def fetch_binance_coins() -> List[str]:
+    """ccxt를 사용하여 바이낸스 거래소의 모든 코인 목록을 가져옵니다."""
+    try:
+        logging.info("Fetching coin list from Binance...")
+        exchange = ccxt.binance()
+        # 네트워크 타임아웃 설정 (단위: ms)
+        exchange.timeout = 30000  # 30초
+        markets = exchange.load_markets()
+        base_coins = [market['base'] for market in markets.values()]
+        unique_base_coins = sorted(list(set(base_coins)))
+        logging.info(f"Successfully fetched {len(unique_base_coins)} unique coins from Binance.")
+        return unique_base_coins
+    except Exception as e:
+        logging.error(f"Failed to fetch coin list from Binance: {e}")
+        # 오류 발생 시 예외를 다시 발생시켜 main 함수에서 처리하도록 함
+        raise
+
+def main():
+    """메인 실행 함수: 설정을 로드하고 대화형으로 명령을 처리합니다."""
+    # 1. 설정 로드
+    # 이 파일의 위치를 기준으로 config.json 경로 설정
+    config_path = Path(__file__).parent / "config.json"
+    config = load_config(config_path)
+
+    # 1a. 바이낸스에서 코인 목록을 동적으로 가져와 설정에 추가
+    try:
+        binance_coins = fetch_binance_coins()
+        config["coins"] = binance_coins
+    except Exception:
+        logging.error("Could not start the bot because the coin list could not be fetched from Binance.")
+        return  # 프로그램 종료
+
+    # 2. 의존성 주입을 사용하여 컴포넌트 초기화
+    # 2a. 포트폴리오 매니저 초기화 (설정 파일에서 API 키 로드)
+    portfolio_manager = PortfolioManager(config)
+
+    extractor = EntityExtractor(config)
+    # 2b. 파서에 extractor와 portfolio_manager 주입
+    parser = TradeCommandParser(extractor, portfolio_manager)
+    executor = TradeExecutor()
+
+    # 3. 대화형으로 명령어 처리
+    print("--- NLP Trade-bot 시작 --- (종료하려면 'exit' 또는 'quit' 입력)")
+    while True:
+        try:
+            text = input("\n[명령어 입력]> ")
+            if text.lower() in ['exit', 'quit']:
+                break
+
+            command = parser.parse(text)
+            if command:
+                result = executor.execute(command)
+                # ensure_ascii=False로 한글 깨짐 방지
+                print(f"[실행 결과]: {json.dumps(result, indent=2, ensure_ascii=False)}")
+            else:
+                print("[실행 결과]: 명령을 해석하지 못했습니다.")
+
+        except (KeyboardInterrupt, EOFError):
+            # Ctrl+C 또는 Ctrl+D로 종료
+            break
+        except Exception as e:
+            logging.error(f"오류 발생: {e}")
+
+    print("\n--- NLP Trade-bot 종료 ---")
+
+if __name__ == '__main__':
+    main()
