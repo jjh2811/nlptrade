@@ -196,6 +196,14 @@ class TradeCommandParser:
             )
             return None
 
+        # 수량 정보 검증 (절대 수량 또는 상대 수량 중 하나는 있어야 함)
+        if entities["amount"] is None and entities["relative_amount"] is None:
+            logging.warning(
+                f"Parse failed for text: '{text}'. "
+                f"Missing amount information (e.g., '10개', '전부', '50%')."
+            )
+            return None
+
         final_amount = entities.get("amount")
 
         # 상대적 수량이 감지된 경우, 실제 수량으로 변환

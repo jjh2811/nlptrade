@@ -69,9 +69,6 @@ def executor():
     
     # 특수문자 및 공백 처리 케이스
     ("  DOGE   500개를 😊 매수해줘  ", TradeCommand(intent='buy', coin='DOGE', amount=500.0, price=None, order_type='market')),
-    
-    # 수량/가격이 없는 케이스
-    ("이더리움 팔아줘", TradeCommand(intent='sell', coin='ETH', amount=None, price=None, order_type='market')),
 ])
 def test_parse_success(parser, input_text, expected_command):
     """다양한 성공 케이스에 대해 파싱이 정상적으로 동작하는지 테스트합니다."""
@@ -85,6 +82,7 @@ def test_parse_success(parser, input_text, expected_command):
     "비트코인",               # 의도 정보 없음
     "이건 그냥 문장입니다",     # 아무 정보 없음
     "",                     # 빈 문자열
+    "이더리움 팔아줘",        # 수량 정보 없음
 ])
 def test_parse_failure(parser, input_text):
     """필수 정보가 누락되거나 유효하지 않은 경우 None을 반환하는지 테스트합니다."""
