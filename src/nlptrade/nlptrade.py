@@ -261,6 +261,18 @@ def load_config(config_path: Path) -> Dict[str, Any]:
         logging.error(f"설정 파일의 형식이 올바르지 않습니다: {config_path}")
         raise
 
+def load_secrets(secrets_path: Path) -> Dict[str, Any]:
+    """비밀 설정 파일(API 키 등)을 로드합니다."""
+    try:
+        with open(secrets_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        logging.warning(f"비밀 설정 파일을 찾을 수 없습니다: {secrets_path}. API 키가 필요한 기능은 동작하지 않을 수 있습니다.")
+        return {}  # 키 파일이 없어도 프로그램은 계속 실행되도록 빈 딕셔너리 반환
+    except json.JSONDecodeError:
+        logging.error(f"비밀 설정 파일의 형식이 올바르지 않습니다: {secrets_path}")
+        raise
+
 def fetch_binance_coins() -> List[str]:
     """ccxt를 사용하여 바이낸스 거래소의 모든 코인 목록을 가져옵니다."""
     try:
@@ -281,11 +293,15 @@ def fetch_binance_coins() -> List[str]:
 def main():
     """메인 실행 함수: 설정을 로드하고 대화형으로 명령을 처리합니다."""
     # 1. 설정 로드
-    # 이 파일의 위치를 기준으로 config.json 경로 설정
     config_path = Path(__file__).parent / "config.json"
     config = load_config(config_path)
 
-    # 1a. 바이낸스에서 코인 목록을 동적으로 가져와 설정에 추가
+    # 1a. 비밀 설정(API 키) 로드 및 병합
+    secrets_path = Path(__file__).parent / "secrets.json"
+    secrets = load_secrets(secrets_path)
+    config.update(secrets)
+
+    # 1b. 바이낸스에서 코인 목록을 동적으로 가져와 설정에 추가
     try:
         binance_coins = fetch_binance_coins()
         config["coins"] = binance_coins

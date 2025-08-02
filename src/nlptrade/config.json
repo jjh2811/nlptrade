@@ -1,0 +1,17 @@
+{
+  "intent_map": {
+    "매수": "buy",
+    "사줘": "buy",
+    "사자": "buy",
+    "매도": "sell",
+    "팔아줘": "sell",
+    "팔자": "sell"
+  },
+  "fuzzy_threshold": 80,
+  "custom_mapping": {
+    "비트코인": "BTC",
+    "이더리움": "ETH",
+    "리플": "XRP",
+    "사토시": "1000SATS"
+  }
+}
