@@ -45,14 +45,19 @@ def portfolio_manager(mocker):
     return mock_pm
 
 @pytest.fixture
-def parser(extractor, portfolio_manager):
-    """의존성이 주입된 TradeCommandParser 인스턴스를 반환하는 픽스처"""
-    return TradeCommandParser(extractor, portfolio_manager)
+def executor(mocker):
+    """TradeExecutor의 모의(mock) 객체를 반환하는 픽스처"""
+    mock_executor = mocker.Mock(spec=TradeExecutor)
+    # '현재가에' 주문 테스트를 위해 호가창 정보를 모의 처리합니다.
+    mock_executor.get_order_book.return_value = {'ask': 50000.0, 'bid': 49999.0}
+    # 비용 기반 수량 계산 테스트를 위해 현재 가격을 모의 처리합니다.
+    mock_executor.get_current_price.return_value = 50000.0
+    return mock_executor
 
 @pytest.fixture
-def executor():
-    """TradeExecutor 인스턴스를 반환하는 픽스처"""
-    return TradeExecutor()
+def parser(extractor, portfolio_manager, executor):
+    """의존성이 주입된 TradeCommandParser 인스턴스를 반환하는 픽스처"""
+    return TradeCommandParser(extractor, portfolio_manager, executor)
 
 # 파싱 성공 케이스
 @pytest.mark.parametrize("input_text, expected_command", [
@@ -69,11 +74,29 @@ def executor():
     
     # 특수문자 및 공백 처리 케이스
     ("  DOGE   500개를 😊 매수해줘  ", TradeCommand(intent='buy', coin='DOGE', amount=500.0, price=None, order_type='market')),
+
+    # 현재가 지정가 주문 테스트
+    ("비트코인 현재가에 10개 매수", TradeCommand(intent='buy', coin='BTC', amount=10.0, price=49999.0, order_type='limit')),
 ])
 def test_parse_success(parser, input_text, expected_command):
     """다양한 성공 케이스에 대해 파싱이 정상적으로 동작하는지 테스트합니다."""
     result_command = parser.parse(input_text)
     assert result_command == expected_command
+
+# 비용 기반 수량 계산 테스트
+def test_parse_cost_based_amount(parser):
+    """비용(e.g., 1000달러어치)을 기반으로 매수/매도 수량이 정확히 계산되는지 테스트합니다."""
+    input_text = "비트코인 1000달러어치 사줘"
+    expected_command = TradeCommand(intent='buy', coin='BTC', amount=0.02, price=None, order_type='market')
+    
+    result_command = parser.parse(input_text)
+    
+    assert result_command is not None
+    assert result_command.intent == expected_command.intent
+    assert result_command.coin == expected_command.coin
+    # 부동소수점 비교를 위해 pytest.approx 사용
+    assert result_command.amount == pytest.approx(expected_command.amount)
+    assert result_command.order_type == expected_command.order_type
 
 # 파싱 실패 케이스
 @pytest.mark.parametrize("input_text", [
@@ -141,7 +164,6 @@ def test_find_closest_symbol(extractor, input_symbol, expected):
 def test_executor(executor):
     """실행기가 주어진 명령을 받아 표준 형식의 결과를 반환하는지 테스트합니다."""
     command = TradeCommand(intent='buy', coin='BTC', amount=1.0, price=None, order_type='market')
-    result = executor.execute(command)
     
     expected_result = {
         "status": "success",
@@ -153,4 +175,7 @@ def test_executor(executor):
             "price": None
         }
     }
+    executor.execute.return_value = expected_result
+    result = executor.execute(command)
     assert result == expected_result
+    executor.execute.assert_called_once_with(command)
