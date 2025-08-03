@@ -1,7 +1,16 @@
 import logging
-from typing import Optional, Dict, Any, Type
-
+from typing import Optional, Dict, Any, Type, Protocol, TYPE_CHECKING
 import ccxt
+
+from ccxt.base.types import Balances
+
+class Exchange(Protocol):
+    """코드에 사용될 ccxt.Exchange의 메서드에 대한 프로토콜 정의(타입 확인용)"""
+    def fetch_balance(self) -> Balances: ...
+    @property
+    def name(self) -> Optional[str]: ...
+
+
 
 class PortfolioManager:
     """
@@ -17,10 +26,10 @@ class PortfolioManager:
             config: 전체 설정 객체. 'exchanges' 키 아래에 거래소별 설정이 있어야 합니다.
         """
         self.exchange_id = exchange_id
-        self.exchange = self._initialize_exchange(exchange_id, config)
+        self.exchange: Optional[Exchange] = self._initialize_exchange(exchange_id, config)
         self.balance = self._fetch_balance()
 
-    def _initialize_exchange(self, exchange_id: str, config: Dict[str, Any]) -> Optional[ccxt.Exchange]:
+    def _initialize_exchange(self, exchange_id: str, config: Dict[str, Any]) -> Optional[Exchange]:
         """거래소 ID와 설정에 따라 ccxt 거래소 인스턴스를 생성하고 초기화합니다."""
         exchanges_config = config.get("exchanges", {})
         exchange_config = exchanges_config.get(exchange_id)
@@ -93,7 +102,7 @@ class PortfolioManager:
             return {}
         try:
             logging.info(f"Fetching account balance from {self.exchange.name}...")
-            balance_data = self.exchange.fetch_balance()
+            balance_data = self.exchange.fetch_balance() 
             free_balances = balance_data.get('free', {})
             logging.info(f"Successfully fetched account balance from {self.exchange.name}.")
             return {
