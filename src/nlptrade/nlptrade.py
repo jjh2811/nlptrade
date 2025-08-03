@@ -41,6 +41,15 @@ class EntityExtractor:
         self.fuzzy_threshold: int = config.get("fuzzy_threshold", 80)
         self.custom_mapping: Dict[str, str] = config.get("custom_mapping", {})
 
+    def refresh_coins(self, executor: 'TradeExecutor'):
+        """거래소에서 최신 코인 목록을 가져와 업데이트합니다."""
+        try:
+            updated_coins = fetch_exchange_coins(executor.exchange_id)
+            self.coins = updated_coins
+            logging.info(f"EntityExtractor: 코인 목록이 거래소에서 성공적으로 업데이트되었습니다. 총 {len(self.coins)}개 코인.")
+        except Exception as e:
+            logging.error(f"EntityExtractor: 코인 목록 업데이트 실패: {e}")
+
     def find_closest_symbol(self, input_symbol: str) -> Optional[str]:
         """입력된 심볼과 가장 유사한 심볼을 찾음"""
         if not input_symbol:
@@ -221,7 +230,16 @@ class TradeCommandParser:
                 f"Parse failed for text: '{text}'. "
                 f"Missing intent ('{entities['intent']}') or coin ('{entities['coin']}')."
             )
-            return None
+            # 코인 정보가 없을 경우, 거래소에서 코인 목록을 새로고침하고 다시 시도
+            if not entities["coin"]:
+                logging.info("코인 정보를 찾을 수 없습니다. 거래소에서 코인 목록을 새로고침합니다.")
+                self.extractor.refresh_coins(self.executor)
+                entities = self.extractor.extract_entities(text) # 다시 엔터티 추출 시도
+                if not entities["coin"]:
+                    logging.warning(f"코인 목록 새로고침 후에도 코인 정보를 찾을 수 없습니다: '{text}'.")
+                    return None
+            else:
+                return None
 
         # '현재가에' 주문 처리
         if entities.get("current_price_order"):
