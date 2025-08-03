@@ -30,6 +30,29 @@ class PortfolioManager:
             self.exchange.timeout = 30000
             self.balance = self._fetch_balance()
 
+    def _parse_and_validate_amount(self, coin: str, amount: Any) -> Optional[float]:
+        """
+        다양한 타입의 amount 값을 float으로 변환하고 유효성을 검사합니다.
+        0보다 큰 경우에만 유효한 값으로 간주합니다.
+        """
+        try:
+            # ccxt는 잔고를 문자열, 숫자 등 다양한 타입으로 반환할 수 있습니다.
+            # float()으로 변환을 시도하여 대부분의 경우를 처리합니다.
+            amount_float = float(amount)
+        except (ValueError, TypeError):
+            # float으로 변환할 수 없는 경우 (e.g., 빈 문자열, None, 지원하지 않는 타입)
+            # 0, 0.0, '', None 등은 일반적인 경우이므로 로그를 남기지 않습니다.
+            if amount:
+                logging.debug(
+                    f"Could not convert balance for '{coin}' to float. "
+                    f"Value was: '{amount}' (type: {type(amount)}). Skipping."
+                )
+            return None
+
+        if amount_float > 0:
+            return amount_float
+        return None
+
     def _fetch_balance(self) -> Dict[str, float]:
         """바이낸스에서 사용 가능한 잔고를 가져와 캐시합니다."""
         if not self.exchange:
@@ -37,29 +60,14 @@ class PortfolioManager:
         try:
             logging.info("Fetching account balance from Binance...")
             balance_data = self.exchange.fetch_balance()
-            # ccxt는 잔고를 문자열로 반환할 수 있으므로, float으로 변환하고 0보다 큰 경우만 필터링합니다.
-            # balance_data.get('free', {})의 반환값은 Dict[str, Any]에 가까우므로,
-            # 명시적 타입 변환을 통해 타입 안정성을 높이고 잠재적 런타임 오류를 방지합니다.
             free_balances = balance_data.get('free', {})
             logging.info("Successfully fetched account balance.")
+
             processed_balances = {}
             for coin, amount in free_balances.items():
-                # ccxt는 잔고를 문자열, 숫자 등 다양한 타입으로 반환할 수 있습니다.
-                # 타입 체커를 만족시키고 런타임 안정성을 높이기 위해 타입을 명시적으로 확인합니다.
-                if isinstance(amount, (int, float)):
-                    if amount > 0:
-                        processed_balances[coin] = float(amount)
-                elif isinstance(amount, str):
-                    if not amount:  # 빈 문자열은 건너뜁니다.
-                        continue
-                    try:
-                        amount_float = float(amount)
-                        if amount_float > 0:
-                            processed_balances[coin] = amount_float
-                    except ValueError:
-                        logging.debug(f"Could not convert string balance for '{coin}' to float. Value was: '{amount}'. Skipping.")
-                elif amount:  # None이나 0이 아닌 다른 예기치 않은 타입은 로그를 남깁니다.
-                    logging.debug(f"Balance for '{coin}' has an unsupported type: {type(amount)}. Value: '{amount}'. Skipping.")
+                valid_amount = self._parse_and_validate_amount(coin, amount)
+                if valid_amount is not None:
+                    processed_balances[coin] = valid_amount
             return processed_balances
         except Exception as e:
             logging.error(f"Failed to fetch balance from Binance: {e}")
