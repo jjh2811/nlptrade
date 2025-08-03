@@ -273,45 +273,44 @@ def load_secrets(secrets_path: Path) -> Dict[str, Any]:
         logging.error(f"비밀 설정 파일의 형식이 올바르지 않습니다: {secrets_path}")
         raise
 
-def fetch_binance_coins() -> List[str]:
-    """ccxt를 사용하여 바이낸스 거래소의 모든 코인 목록을 가져옵니다."""
+def fetch_exchange_coins(exchange_id: str) -> List[str]:
+    """ccxt를 사용하여 지정된 거래소의 모든 코인 목록을 가져옵니다."""
     try:
-        logging.info("Fetching coin list from Binance...")
-        exchange = ccxt.binance()
+        logging.info(f"Fetching coin list from {exchange_id.capitalize()}...")
+        exchange_class = getattr(ccxt, exchange_id)
+        exchange = exchange_class()
         # 네트워크 타임아웃 설정 (단위: ms)
         exchange.timeout = 30000  # 30초
         markets = exchange.load_markets()
         base_coins = [market['base'] for market in markets.values()]
         unique_base_coins = sorted(list(set(base_coins)))
-        logging.info(f"Successfully fetched {len(unique_base_coins)} unique coins from Binance.")
+        logging.info(f"Successfully fetched {len(unique_base_coins)} unique coins from {exchange_id.capitalize()}.")
         return unique_base_coins
     except Exception as e:
-        logging.error(f"Failed to fetch coin list from Binance: {e}")
+        logging.error(f"Failed to fetch coin list from {exchange_id.capitalize()}: {e}")
         # 오류 발생 시 예외를 다시 발생시켜 main 함수에서 처리하도록 함
         raise
 
 def main():
     """메인 실행 함수: 설정을 로드하고 대화형으로 명령을 처리합니다."""
-    # 1. 설정 로드
     config_path = Path(__file__).parent / "config.json"
     config = load_config(config_path)
-
-    # 1a. 비밀 설정(API 키) 로드 및 병합
     secrets_path = Path(__file__).parent / "secrets.json"
     secrets = load_secrets(secrets_path)
     config.update(secrets)
 
-    # 1b. 바이낸스에서 코인 목록을 동적으로 가져와 설정에 추가
+    # 1. 기본 거래소 ID를 설정에서 가져와 코인 목록을 동적으로 로드
+    default_exchange_id = config.get("default_exchange", "binance")
     try:
-        binance_coins = fetch_binance_coins()
-        config["coins"] = binance_coins
+        exchange_coins = fetch_exchange_coins(default_exchange_id)
+        config["coins"] = exchange_coins
     except Exception:
-        logging.error("Could not start the bot because the coin list could not be fetched from Binance.")
+        logging.error(f"Could not start the bot because the coin list could not be fetched from {default_exchange_id.capitalize()}.")
         return  # 프로그램 종료
 
     # 2. 의존성 주입을 사용하여 컴포넌트 초기화
-    # 2a. 포트폴리오 매니저 초기화 (설정 파일에서 API 키 로드)
-    portfolio_manager = PortfolioManager(config)
+    # 2a. 포트폴리오 매니저 초기화
+    portfolio_manager = PortfolioManager(default_exchange_id, config)
 
     extractor = EntityExtractor(config)
     # 2b. 파서에 extractor와 portfolio_manager 주입
