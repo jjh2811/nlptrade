@@ -24,6 +24,7 @@ class TradeCommand:
     amount: Optional[float]  # 거래 수량
     price: Optional[float]  # 지정가 가격 (시장가의 경우 None)
     order_type: str  # "market" or "limit"
+    total_cost: Optional[float] = None # 총 주문 비용
 
 def clean_text(text: str) -> str:
     """유효하지 않은 Unicode 문자를 제거하거나 대체"""
@@ -129,11 +130,32 @@ class EntityExtractor:
         return None
 
     def _extract_price(self, text: str) -> Optional[float]:
-        """텍스트에서 지정가 가격을 추출"""
-        price_match = re.search(r'(\d+(?:\.\d+)?)\s*달러', text)
+        """텍스트에서 지정가 가격을 추출 (e.g., '1000원에', '50달러에', '50usdt에')"""
+        # '현재가에'가 있으면 가격 추출을 무시
+        if '현재가에' in text:
+            return None
+        price_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:원|달러|usdt)에', text, re.IGNORECASE)
         if price_match:
             return float(price_match.group(1))
         return None
+
+    def _extract_total_cost(self, text: str) -> Optional[float]:
+        """텍스트에서 '얼마어치' 또는 '얼마' 같은 총 비용을 추출"""
+        # '...어치'를 먼저 찾고, 없으면 '...'을 찾는다.
+        cost_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:원|달러|usdt)어치', text, re.IGNORECASE)
+        if cost_match:
+            return float(cost_match.group(1))
+        
+        # '...에'가 붙지 않은 경우를 비용으로 간주
+        cost_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:원|달러|usdt)(?!\s*에)', text, re.IGNORECASE)
+        if cost_match:
+            return float(cost_match.group(1))
+
+        return None
+
+    def _extract_current_price_order(self, text: str) -> bool:
+        """'현재가에' 키워드가 있는지 확인"""
+        return '현재가에' in text
 
     def _extract_relative_amount(self, text: str) -> Optional[Dict[str, Any]]:
         """텍스트에서 '전부', '절반', '20%' 같은 상대적 수량을 추출"""
@@ -160,6 +182,8 @@ class EntityExtractor:
             "amount": self._extract_amount(clean_input),
             "price": self._extract_price(clean_input),
             "relative_amount": self._extract_relative_amount(clean_input),
+            "total_cost": self._extract_total_cost(clean_input),
+            "current_price_order": self._extract_current_price_order(clean_input),
             "order_type": "market"
         }
 
@@ -167,22 +191,25 @@ class EntityExtractor:
         if entities["amount"] is not None:
             entities["relative_amount"] = None
 
-        if entities["price"] is not None:
+        # 가격이 있거나 '현재가에' 주문이면 지정가
+        if entities["price"] is not None or entities["current_price_order"]:
             entities["order_type"] = "limit"
 
         return entities
 
 class TradeCommandParser:
-    def __init__(self, extractor: EntityExtractor, portfolio_manager: PortfolioManager):
+    def __init__(self, extractor: EntityExtractor, portfolio_manager: PortfolioManager, executor: 'TradeExecutor'):
         """
         TradeCommandParser를 초기화합니다.
 
         Args:
             extractor: 엔터티 추출을 담당하는 EntityExtractor 객체.
             portfolio_manager: 포트폴리오 관리를 담당하는 PortfolioManager 객체.
+            executor: TradeExecutor 객체.
         """
         self.extractor = extractor
         self.portfolio_manager = portfolio_manager
+        self.executor = executor
 
     def parse(self, text: str) -> Optional[TradeCommand]:
         """주어진 텍스트를 파싱하여 TradeCommand 객체로 변환합니다."""
@@ -196,15 +223,50 @@ class TradeCommandParser:
             )
             return None
 
-        # 수량 정보 검증 (절대 수량 또는 상대 수량 중 하나는 있어야 함)
-        if entities["amount"] is None and entities["relative_amount"] is None:
+        # '현재가에' 주문 처리
+        if entities.get("current_price_order"):
+            coin_symbol = str(entities["coin"])
+            intent = str(entities["intent"])
+            order_book = self.executor.get_order_book(coin_symbol)
+
+            if order_book:
+                if intent == 'buy':
+                    entities['price'] = order_book['ask']
+                    logging.info(f"현재가 매수: {coin_symbol}의 1호 매도호가({order_book['ask']})로 지정가 설정")
+                elif intent == 'sell':
+                    entities['price'] = order_book['bid']
+                    logging.info(f"현재가 매도: {coin_symbol}의 1호 매수호가({order_book['bid']})로 지정가 설정")
+            else:
+                logging.error(f"'{coin_symbol}'의 호가를 가져올 수 없어 '현재가에' 주문을 처리할 수 없습니다.")
+                return None
+
+        # 수량 정보 검증 (절대 수량, 상대 수량, 총 비용 중 하나는 있어야 함)
+        if entities["amount"] is None and entities["relative_amount"] is None and entities["total_cost"] is None:
             logging.warning(
                 f"Parse failed for text: '{text}'. "
-                f"Missing amount information (e.g., '10개', '전부', '50%')."
+                f"Missing amount information (e.g., '10개', '전부', '50%', '10000원어치')."
             )
             return None
 
         final_amount = entities.get("amount")
+        total_cost = entities.get("total_cost")
+
+        # 총 비용이 명시된 경우, 수량 계산
+        if total_cost is not None:
+            coin_symbol = str(entities["coin"])
+            # '현재가에' 주문으로 가격이 이미 결정되었는지 확인
+            price_to_use = entities.get("price")
+            
+            # 가격이 아직 결정되지 않았다면 (e.g. "비트코인 10000원어치"), 현재가 조회
+            if price_to_use is None:
+                price_to_use = self.executor.get_current_price(coin_symbol)
+
+            if price_to_use is not None and price_to_use > 0:
+                final_amount = total_cost / price_to_use
+                logging.info(f"계산된 수량: {total_cost} USDT / {price_to_use} USDT/coin -> {final_amount} {coin_symbol}")
+            else:
+                logging.error(f"'{coin_symbol}'의 현재 가격을 가져올 수 없어 총 비용 기반 주문을 처리할 수 없습니다.")
+                return None
 
         # 상대적 수량이 감지된 경우, 실제 수량으로 변환
         relative_amount_info = entities.get("relative_amount")
@@ -232,7 +294,8 @@ class TradeCommandParser:
             coin=str(entities["coin"]),
             amount=final_amount,
             price=entities.get("price"),
-            order_type=str(entities["order_type"])
+            order_type=str(entities["order_type"]),
+            total_cost=total_cost
         )
 
 class TradeExecutor:
@@ -240,9 +303,48 @@ class TradeExecutor:
     TradeCommand를 실행합니다.
     참고: 이 클래스는 실제 거래소 API와 연동하는 로직이 들어갈 위치의 예시입니다.
     """
+    def __init__(self, exchange_id: str, config: Dict[str, Any]):
+        self.exchange_id = exchange_id
+        self.config = config
+        try:
+            exchange_class = getattr(ccxt, self.exchange_id)
+            self.exchange = exchange_class(self.config.get('ccxt', {}))
+            self.exchange.timeout = 30000  # 30초
+        except Exception as e:
+            logging.error(f"Failed to initialize exchange {self.exchange_id}: {e}")
+            raise
+
+    def get_current_price(self, coin_symbol: str) -> Optional[float]:
+        """지정된 코인의 현재 USDT 가격을 가져옵니다."""
+        try:
+            ticker = self.exchange.fetch_ticker(f'{coin_symbol}/USDT')
+            return ticker['last']
+        except Exception as e:
+            logging.error(f"Could not fetch price for {coin_symbol}: {e}")
+            return None
+
+    def get_order_book(self, coin_symbol: str) -> Optional[Dict[str, float]]:
+        """지정된 코인의 오더북을 가져와 1호가(매수/매도)를 반환합니다."""
+        try:
+            # USDT 페어로 오더북 조회
+            order_book = self.exchange.fetch_order_book(f'{coin_symbol}/USDT', limit=1)
+            # 오더북에 매수/매도 오더가 있는지 확인
+            if order_book['bids'] and order_book['asks']:
+                best_bid = order_book['bids'][0][0]  # 가장 높은 매수 가격
+                best_ask = order_book['asks'][0][0]  # 가장 낮은 매도 가격
+                logging.info(f"Order book for {coin_symbol}: Best Bid={best_bid}, Best Ask={best_ask}")
+                return {'bid': best_bid, 'ask': best_ask}
+            else:
+                logging.warning(f"Order book for {coin_symbol} is empty.")
+                return None
+        except Exception as e:
+            logging.error(f"Could not fetch order book for {coin_symbol}: {e}")
+            return None
+
     def execute(self, command: TradeCommand) -> Dict:
         """주어진 명령을 실행하고 결과를 JSON 호환 딕셔너리로 반환합니다."""
         logging.info(f"Executing command: {command}")
+        # 실제 거래 로직 추가 (예: self.exchange.create_market_buy_order(...))
         result = {
             "status": "success",
             "command_executed": command.__dict__
@@ -311,11 +413,10 @@ def main():
     # 2. 의존성 주입을 사용하여 컴포넌트 초기화
     # 2a. 포트폴리오 매니저 초기화
     portfolio_manager = PortfolioManager(default_exchange_id, config)
-
+    executor = TradeExecutor(default_exchange_id, config)
     extractor = EntityExtractor(config)
     # 2b. 파서에 extractor와 portfolio_manager 주입
-    parser = TradeCommandParser(extractor, portfolio_manager)
-    executor = TradeExecutor()
+    parser = TradeCommandParser(extractor, portfolio_manager, executor)
 
     # 3. 대화형으로 명령어 처리
     print("--- NLP Trade-bot 시작 --- (종료하려면 'exit' 또는 'quit' 입력)")
