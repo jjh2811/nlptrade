@@ -231,8 +231,8 @@ class TradeCommandParser:
 
             if order_book:
                 if intent == 'buy':
-                    entities['price'] = order_book['ask']
-                    logging.info(f"현재가 매수: {coin_symbol}의 1호 매도호가({order_book['ask']})로 지정가 설정")
+                    entities['price'] = order_book['bid']
+                    logging.info(f"현재가 매수: {coin_symbol}의 1호 매수호가({order_book['bid']})로 지정가 설정")
                 elif intent == 'sell':
                     entities['price'] = order_book['bid']
                     logging.info(f"현재가 매도: {coin_symbol}의 1호 매수호가({order_book['bid']})로 지정가 설정")
