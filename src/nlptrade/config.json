@@ -5,7 +5,9 @@
     "사자": "buy",
     "매도": "sell",
     "팔아줘": "sell",
-    "팔자": "sell"
+    "팔자": "sell",
+    "구매": "buy",
+    "판매": "sell"
   },
   "fuzzy_threshold": 80,
   "custom_mapping": {
