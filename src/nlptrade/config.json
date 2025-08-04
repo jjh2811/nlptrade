@@ -1,4 +1,15 @@
 {
+  "exchange_settings": {
+    "binance": {
+      "quote_currency": "USDT"
+    },
+    "upbit": {
+      "quote_currency": "KRW"
+    },
+    "bithumb": {
+      "quote_currency": "KRW"
+    }
+  },
   "intent_map": {
     "매수": "buy",
     "사줘": "buy",

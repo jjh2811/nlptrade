@@ -3,8 +3,8 @@ import json
 import logging
 from pathlib import Path
 
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
 from nlptrade.nlptrade import (
     load_config,
@@ -48,6 +48,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     await update.message.reply_html(
         "<b>지원하는 명령어 형식:</b>\n"
+        "- <code>/exchange</code>: 거래소 변경 버튼을 표시합니다.\n"
         "- <code>[코인 이름] [수량] [매수/매도]</code> (예: 비트코인 10개 사줘)\n"
         "- <code>[코인 이름] [수량] [가격] [매수/매도]</code> (예: 이더리움 3개 4000달러에 팔아줘)\n"
         "- <code>[코인 이름] [비용]어치 [매수/매도]</code> (예: 리플 5000원어치 매수)\n"
@@ -59,14 +60,73 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "<b>상대 수량:</b> '전부', '절반', '50%' 등 (매도에만 적용)\n"
     )
 
+async def exchange_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/exchange 명령어 핸들러 - 거래소 선택 버튼 표시"""
+    keyboard = [
+        [InlineKeyboardButton("Binance", callback_data='set_exchange_binance')],
+        [InlineKeyboardButton("Upbit", callback_data='set_exchange_upbit')],
+        [InlineKeyboardButton("Bithumb", callback_data='set_exchange_bithumb')],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    if not update.message:
+        return
+    await update.message.reply_text('변경할 거래소를 선택하세요:', reply_markup=reply_markup)
+
+
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """인라인 키보드 버튼 클릭 처리"""
+    query = update.callback_query
+    await query.answer()
+
+    if query.data and query.data.startswith('set_exchange_'):
+        exchange_id = query.data.replace('set_exchange_', '')
+        logger.info(f"Setting exchange to {exchange_id}")
+
+        try:
+            # config는 bot_data에서 가져옵니다.
+            config = context.bot_data['config']
+            
+            # 새 거래소의 코인 목록을 가져옵니다.
+            exchange_coins = fetch_exchange_coins(exchange_id)
+            config["coins"] = exchange_coins
+
+            # 새 거래소 ID로 컴포넌트들을 다시 초기화합니다.
+            portfolio_manager = PortfolioManager(exchange_id, config)
+            executor = TradeExecutor(exchange_id, config)
+            extractor = EntityExtractor(config)
+            parser = TradeCommandParser(extractor, portfolio_manager, executor)
+
+            # bot_data를 업데이트합니다.
+            context.bot_data.update({
+                "parser": parser,
+                "executor": executor,
+                "portfolio_manager": portfolio_manager,
+                "exchange_id": exchange_id
+            })
+
+            await query.edit_message_text(text=f"거래소가 {exchange_id}(으)로 설정되었습니다.")
+
+        except Exception as e:
+            logger.error(f"Error setting exchange to {exchange_id}: {e}")
+            await query.edit_message_text(text=f"{exchange_id} 거래소를 설정하는 중 오류가 발생했습니다: {e}")
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """모든 텍스트 메시지를 처리하는 핸들러"""
-    global parser, executor
     if not update.message or not update.message.text:
         return
 
     text = update.message.text
     logger.info(f"Received message: {text}")
+
+    # bot_data에서 파서와 실행기를 가져옵니다.
+    parser = context.bot_data.get('parser')
+    executor = context.bot_data.get('executor')
+
+    if not parser or not executor:
+        logger.error("Parser or executor not found in bot_data")
+        await update.message.reply_text("봇이 올바르게 초기화되지 않았습니다.")
+        return
 
     command = parser.parse(text)
 
@@ -84,7 +144,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 def main() -> None:
     """텔레그램 봇을 시작하고 실행합니다."""
-    global parser, executor
 
     # 설정 로드
     config_path = Path(__file__).parent / "config.json"
@@ -98,7 +157,10 @@ def main() -> None:
         logger.error("텔레그램 봇 토큰이 secrets.json 파일에 설정되지 않았습니다.")
         return
 
-    # nlptrade 컴포넌트 초기화
+    # 텔레그램 봇 애플리케이션 생성
+    application = Application.builder().token(telegram_token).build()
+
+    # nlptrade 컴포넌트 초기화 및 bot_data에 저장
     default_exchange_id = config.get("default_exchange", "binance")
     try:
         exchange_coins = fetch_exchange_coins(default_exchange_id)
@@ -112,12 +174,17 @@ def main() -> None:
     extractor = EntityExtractor(config)
     parser = TradeCommandParser(extractor, portfolio_manager, executor)
 
-    # 텔레그램 봇 애플리케이션 생성
-    application = Application.builder().token(telegram_token).build()
+    application.bot_data['config'] = config
+    application.bot_data['parser'] = parser
+    application.bot_data['executor'] = executor
+    application.bot_data['portfolio_manager'] = portfolio_manager
+    application.bot_data['exchange_id'] = default_exchange_id
 
     # 핸들러 등록
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("exchange", exchange_command))
+    application.add_handler(CallbackQueryHandler(button))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     # 봇 실행

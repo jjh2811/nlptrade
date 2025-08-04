@@ -281,7 +281,8 @@ class TradeCommandParser:
 
             if price_to_use is not None and price_to_use > 0:
                 final_amount = total_cost / price_to_use
-                logging.info(f"계산된 수량: {total_cost} USDT / {price_to_use} USDT/coin -> {final_amount} {coin_symbol}")
+                quote_currency = self.executor._get_quote_currency()
+                logging.info(f"계산된 수량: {total_cost} {quote_currency} / {price_to_use} {quote_currency}/coin -> {final_amount} {coin_symbol}")
             else:
                 logging.error(f"'{coin_symbol}'의 현재 가격을 가져올 수 없어 총 비용 기반 주문을 처리할 수 없습니다.")
                 return None
@@ -332,31 +333,42 @@ class TradeExecutor:
             logging.error(f"Failed to initialize exchange {self.exchange_id}: {e}")
             raise
 
+    def _get_quote_currency(self) -> str:
+        """현재 거래소에 맞는 기본 견적 통화(quote currency)를 반환합니다."""
+        if self.exchange_id in ['upbit', 'bithumb']:
+            return 'KRW'
+        # 기본값은 USDT로 설정 (Binance 등)
+        return 'USDT'
+
     def get_current_price(self, coin_symbol: str) -> Optional[float]:
-        """지정된 코인의 현재 USDT 가격을 가져옵니다."""
+        """지정된 코인의 현재 가격을 가져옵니다."""
+        quote_currency = self._get_quote_currency()
+        market_symbol = f'{coin_symbol}/{quote_currency}'
         try:
-            ticker = self.exchange.fetch_ticker(f'{coin_symbol}/USDT')
+            ticker = self.exchange.fetch_ticker(market_symbol)
             return ticker['last']
         except Exception as e:
-            logging.error(f"Could not fetch price for {coin_symbol}: {e}")
+            logging.error(f"Could not fetch price for {market_symbol}: {e}")
             return None
 
     def get_order_book(self, coin_symbol: str) -> Optional[Dict[str, float]]:
         """지정된 코인의 오더북을 가져와 1호가(매수/매도)를 반환합니다."""
+        quote_currency = self._get_quote_currency()
+        market_symbol = f'{coin_symbol}/{quote_currency}'
         try:
-            # USDT 페어로 오더북 조회
-            order_book = self.exchange.fetch_order_book(f'{coin_symbol}/USDT', limit=1)
+            # 페어로 오더북 조회
+            order_book = self.exchange.fetch_order_book(market_symbol, limit=1)
             # 오더북에 매수/매도 오더가 있는지 확인
             if order_book['bids'] and order_book['asks']:
                 best_bid = order_book['bids'][0][0]  # 가장 높은 매수 가격
                 best_ask = order_book['asks'][0][0]  # 가장 낮은 매도 가격
-                logging.info(f"Order book for {coin_symbol}: Best Bid={best_bid}, Best Ask={best_ask}")
+                logging.info(f"Order book for {market_symbol}: Best Bid={best_bid}, Best Ask={best_ask}")
                 return {'bid': best_bid, 'ask': best_ask}
             else:
-                logging.warning(f"Order book for {coin_symbol} is empty.")
+                logging.warning(f"Order book for {market_symbol} is empty.")
                 return None
         except Exception as e:
-            logging.error(f"Could not fetch order book for {coin_symbol}: {e}")
+            logging.error(f"Could not fetch order book for {market_symbol}: {e}")
             return None
 
     def execute(self, command: TradeCommand) -> Dict:
