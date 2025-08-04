@@ -343,7 +343,6 @@ class TradeExecutor:
         self.quote_currency = self._get_quote_currency()
         self.exchange = self._initialize_exchange()
 
-    # def _initialize_exchange(self) -> ccxt.Exchange:
     def _initialize_exchange(self) -> Exchange:
         """거래소 ID와 설정에 따라 ccxt 거래소 인스턴스를 생성하고 초기화합니다."""
         exchange_id_for_ccxt = self.exchange_id.replace('_testnet', '')
