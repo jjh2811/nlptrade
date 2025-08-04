@@ -1,15 +1,16 @@
 import logging
-from typing import Optional, Dict, Any, Type, Protocol, TYPE_CHECKING
-import ccxt
+from typing import Any, Dict, Optional, Protocol, Type
 
+import ccxt
 from ccxt.base.types import Balances
+
 
 class Exchange(Protocol):
     """코드에 사용될 ccxt.Exchange의 메서드에 대한 프로토콜 정의(타입 확인용)"""
-    def fetch_balance(self) -> Balances: ...
+
+    def fetch_balance(self, params={}) -> Balances: ...
     @property
     def name(self) -> Optional[str]: ...
-
 
 
 class PortfolioManager:
@@ -17,6 +18,7 @@ class PortfolioManager:
     사용자의 거래소 포트폴리오(계좌 잔고)를 관리합니다.
     API 키는 설정 파일에서 로드합니다.
     """
+
     def __init__(self, exchange_id: str, config: Dict[str, Any], use_testnet: bool = False):
         """
         PortfolioManager를 초기화합니다.
@@ -34,7 +36,7 @@ class PortfolioManager:
     def _initialize_exchange(self, exchange_id: str, config: Dict[str, Any], use_testnet: bool) -> Optional[Exchange]:
         """거래소 ID와 설정에 따라 ccxt 거래소 인스턴스를 생성하고 초기화합니다."""
         exchanges_config = config.get("exchanges", {})
-        
+
         # 테스트넷 사용 시 설정 키를 변경합니다.
         if use_testnet and exchange_id == 'binance':
             config_key = 'binance_testnet'
@@ -54,7 +56,7 @@ class PortfolioManager:
 
         api_key = exchange_config.get("api_key")
         secret_key = exchange_config.get("secret_key")
-        
+
         network_name = f"{exchange_id.capitalize()}"
         if exchange_id == 'binance':
             network_name += " Testnet" if use_testnet else " Mainnet"
@@ -112,7 +114,7 @@ class PortfolioManager:
             return {}
         try:
             logging.info(f"Fetching account balance from {self.exchange.name}...")
-            balance_data = self.exchange.fetch_balance() 
+            balance_data = self.exchange.fetch_balance()
             free_balances = balance_data.get('free', {})
             logging.info(f"Successfully fetched account balance from {self.exchange.name}.")
             return {

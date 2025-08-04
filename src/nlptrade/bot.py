@@ -1,19 +1,25 @@
-import asyncio
 import json
 import logging
 from pathlib import Path
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
 from nlptrade.nlptrade import (
-    load_config,
-    load_secrets,
-    fetch_exchange_coins,
     EntityExtractor,
+    PortfolioManager,
     TradeCommandParser,
     TradeExecutor,
-    PortfolioManager,
+    fetch_exchange_coins,
+    load_config,
+    load_secrets,
 )
 
 # 로깅 설정
@@ -31,6 +37,7 @@ logging.getLogger("telegram.ext").setLevel(logging.WARNING)
 parser: TradeCommandParser
 executor: TradeExecutor
 
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/start 명령어 핸들러"""
     if not update.message:
@@ -41,6 +48,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "예: <i>비트코인 10개 사줘</i>\n"
         "도움이 필요하시면 /help 를 입력하세요."
     )
+
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/help 명령어 핸들러"""
@@ -59,6 +67,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "<b>가격:</b> '50000달러에', '600만원에' 등\n"
         "<b>상대 수량:</b> '전부', '절반', '50%' 등 (매도에만 적용)\n"
     )
+
 
 async def exchange_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/exchange 명령어 핸들러 - 거래소 선택 버튼 표시"""
@@ -81,13 +90,16 @@ async def exchange_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """인라인 키보드 버튼 클릭 처리"""
     query = update.callback_query
+    if query is None:
+        return
+
     await query.answer()
 
     if query.data and query.data.startswith('set_exchange_'):
         parts = query.data.replace('set_exchange_', '').split('_')
         exchange_id = parts[0]
         is_testnet = len(parts) > 1 and parts[1] == 'testnet'
-        
+
         network_name = f"{exchange_id.capitalize()}"
         if exchange_id == 'binance':
             network_name += " Testnet" if is_testnet else " Mainnet"
@@ -96,13 +108,13 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
         try:
             config = context.bot_data['config']
-            
+
             exchange_coins = fetch_exchange_coins(exchange_id)
             config["coins"] = exchange_coins
 
             # 포트폴리오 매니저를 올바른 테스트넷 설정으로 초기화
             portfolio_manager = PortfolioManager(exchange_id, config, use_testnet=is_testnet)
-            
+
             # 다른 컴포넌트들도 새 거래소 설정으로 다시 초기화
             executor = TradeExecutor(exchange_id, config)
             extractor = EntityExtractor(config)
@@ -113,7 +125,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 "executor": executor,
                 "portfolio_manager": portfolio_manager,
                 "exchange_id": exchange_id,
-                "is_testnet": is_testnet, # 테스트넷 상태 저장
+                "is_testnet": is_testnet,  # 테스트넷 상태 저장
             })
 
             await query.edit_message_text(text=f"거래소가 {network_name}(으)로 설정되었습니다.")
@@ -153,6 +165,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_text(f"명령 실행 중 오류가 발생했습니다: {e}")
     else:
         await update.message.reply_text("명령을 이해하지 못했습니다. /help 를 참고하세요.")
+
 
 def main() -> None:
     """텔레그램 봇을 시작하고 실행합니다."""
@@ -202,6 +215,7 @@ def main() -> None:
     # 봇 실행
     logger.info("Telegram bot is running...")
     application.run_polling()
+
 
 if __name__ == "__main__":
     main()

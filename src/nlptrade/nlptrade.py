@@ -1,14 +1,16 @@
+from dataclasses import dataclass
 import json
 import logging
-import re
-from dataclasses import dataclass
-from typing import Optional, Dict, List, Any
 from pathlib import Path
-
+import re
+from typing import Any, Dict, List, Optional, Protocol
 import unicodedata
-from rapidfuzz import fuzz
+
 import ccxt
+from ccxt.base.types import Int, Num, OrderBook, Ticker
 from mecab import MeCab
+from rapidfuzz import fuzz
+
 from .portfolio import PortfolioManager
 
 # MeCab 객체 초기화
@@ -17,6 +19,14 @@ mecab = MeCab()
 # 로깅 설정
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+
+class Exchange(Protocol):
+    """코드에 사용될 ccxt.Exchange의 메서드에 대한 프로토콜 정의(타입 확인용)"""
+
+    def fetch_ticker(self, symbol: str, params={}) -> Ticker: ...
+    def fetch_order_book(self, symbol: str, limit: Int = None, params={}) -> OrderBook: ...
+
+
 @dataclass
 class TradeCommand:
     intent: str  # "buy" or "sell"
@@ -24,7 +34,8 @@ class TradeCommand:
     amount: Optional[float]  # 거래 수량
     price: Optional[float]  # 지정가 가격 (시장가의 경우 None)
     order_type: str  # "market" or "limit"
-    total_cost: Optional[float] = None # 총 주문 비용
+    total_cost: Optional[float] = None  # 총 주문 비용
+
 
 def clean_text(text: str) -> str:
     """유효하지 않은 Unicode 문자를 제거하거나 대체"""
@@ -33,6 +44,7 @@ def clean_text(text: str) -> str:
     # 유효하지 않은 문자 (surrogate 등) 제거
     text = ''.join(c for c in text if c.isprintable() and ord(c) < 0x10000)
     return text
+
 
 class EntityExtractor:
     def __init__(self, config: Dict[str, Any]):
@@ -122,7 +134,7 @@ class EntityExtractor:
         logging.debug(f"Tokens for coin extraction: {tokens}")
         for token, pos in tokens:
             # 고유명사(NNP) 또는 일반명사(NNG)를 코인 이름 후보로 간주
-            if pos.startswith('NN'): # NNP, NNG 등 명사류
+            if pos.startswith('NN'):  # NNP, NNG 등 명사류
                 # 일반적인 거래 단위 등은 제외
                 if token in ['개', '달러', '시장가', '지정가']:
                     continue
@@ -154,7 +166,7 @@ class EntityExtractor:
         cost_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:원|달러|usdt)어치', text, re.IGNORECASE)
         if cost_match:
             return float(cost_match.group(1))
-        
+
         # '...에'가 붙지 않은 경우를 비용으로 간주
         cost_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:원|달러|usdt)(?!\s*에)', text, re.IGNORECASE)
         if cost_match:
@@ -206,6 +218,7 @@ class EntityExtractor:
 
         return entities
 
+
 class TradeCommandParser:
     def __init__(self, extractor: EntityExtractor, portfolio_manager: PortfolioManager, executor: 'TradeExecutor'):
         """
@@ -234,7 +247,7 @@ class TradeCommandParser:
             if not entities["coin"]:
                 logging.info("코인 정보를 찾을 수 없습니다. 거래소에서 코인 목록을 새로고침합니다.")
                 self.extractor.refresh_coins(self.executor)
-                entities = self.extractor.extract_entities(text) # 다시 엔터티 추출 시도
+                entities = self.extractor.extract_entities(text)  # 다시 엔터티 추출 시도
                 if not entities["coin"]:
                     logging.warning(f"코인 목록 새로고침 후에도 코인 정보를 찾을 수 없습니다: '{text}'.")
                     return None
@@ -274,12 +287,12 @@ class TradeCommandParser:
             coin_symbol = str(entities["coin"])
             # '현재가에' 주문으로 가격이 이미 결정되었는지 확인
             price_to_use = entities.get("price")
-            
+
             # 가격이 아직 결정되지 않았다면 (e.g. "비트코인 10000원어치"), 현재가 조회
             if price_to_use is None:
                 price_to_use = self.executor.get_current_price(coin_symbol)
 
-            if price_to_use is not None and price_to_use > 0:
+            if price_to_use is not None and float(price_to_use) > 0:
                 final_amount = total_cost / price_to_use
                 quote_currency = self.executor._get_quote_currency()
                 logging.info(f"계산된 수량: {total_cost} {quote_currency} / {price_to_use} {quote_currency}/coin -> {final_amount} {coin_symbol}")
@@ -317,18 +330,21 @@ class TradeCommandParser:
             total_cost=total_cost
         )
 
+
 class TradeExecutor:
     """
     TradeCommand를 실행합니다.
     참고: 이 클래스는 실제 거래소 API와 연동하는 로직이 들어갈 위치의 예시입니다.
     """
+
     def __init__(self, exchange_id: str, config: Dict[str, Any]):
         self.exchange_id = exchange_id
         self.config = config
         self.quote_currency = self._get_quote_currency()
         self.exchange = self._initialize_exchange()
 
-    def _initialize_exchange(self) -> ccxt.Exchange:
+    # def _initialize_exchange(self) -> ccxt.Exchange:
+    def _initialize_exchange(self) -> Exchange:
         """거래소 ID와 설정에 따라 ccxt 거래소 인스턴스를 생성하고 초기화합니다."""
         exchange_id_for_ccxt = self.exchange_id.replace('_testnet', '')
         is_testnet = self.exchange_id.endswith('_testnet')
@@ -360,7 +376,7 @@ class TradeExecutor:
             )
             return "USDT"
 
-    def get_current_price(self, coin_symbol: str) -> Optional[float]:
+    def get_current_price(self, coin_symbol: str) -> Optional[Num]:
         """지정된 코인의 현재 가격을 가져옵니다."""
         quote_currency = self._get_quote_currency()
         market_symbol = f'{coin_symbol}/{quote_currency}'
@@ -371,7 +387,7 @@ class TradeExecutor:
             logging.error(f"Could not fetch price for {market_symbol}: {e}")
             return None
 
-    def get_order_book(self, coin_symbol: str) -> Optional[Dict[str, float]]:
+    def get_order_book(self, coin_symbol: str) -> Optional[Dict[str, Num]]:
         """지정된 코인의 오더북을 가져와 1호가(매수/매도)를 반환합니다."""
         quote_currency = self._get_quote_currency()
         market_symbol = f'{coin_symbol}/{quote_currency}'
@@ -401,6 +417,7 @@ class TradeExecutor:
         }
         return result
 
+
 def load_config(config_path: Path) -> Dict[str, Any]:
     """설정 파일을 로드합니다."""
     try:
@@ -412,6 +429,7 @@ def load_config(config_path: Path) -> Dict[str, Any]:
     except json.JSONDecodeError:
         logging.error(f"설정 파일의 형식이 올바르지 않습니다: {config_path}")
         raise
+
 
 def load_secrets(secrets_path: Path) -> Dict[str, Any]:
     """비밀 설정 파일(API 키 등)을 로드합니다."""
@@ -432,6 +450,7 @@ def load_secrets(secrets_path: Path) -> Dict[str, Any]:
         logging.error(f"비밀 설정 파일의 형식이 올바르지 않습니다: {secrets_path}")
         raise
 
+
 def fetch_exchange_coins(exchange_id: str) -> List[str]:
     """ccxt를 사용하여 지정된 거래소의 모든 코인 목록을 가져옵니다."""
     try:
@@ -449,6 +468,7 @@ def fetch_exchange_coins(exchange_id: str) -> List[str]:
         logging.error(f"Failed to fetch coin list from {exchange_id.capitalize()}: {e}")
         # 오류 발생 시 예외를 다시 발생시켜 main 함수에서 처리하도록 함
         raise
+
 
 def main():
     """메인 실행 함수: 설정을 로드하고 대화형으로 명령을 처리합니다."""
@@ -498,6 +518,7 @@ def main():
             logging.error(f"오류 발생: {e}")
 
     print("\n--- NLP Trade-bot 종료 ---")
+
 
 if __name__ == '__main__':
     main()
