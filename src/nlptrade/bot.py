@@ -22,6 +22,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# HTTPX 및 Telegram 라이브러리의 INFO 레벨 로그가 너무 자주 출력되는 것을 방지하기 위해
+# 관련 로거들의 레벨을 WARNING으로 상향 조정합니다.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("telegram.ext").setLevel(logging.WARNING)
+
 # 전역 변수로 파서와 실행기 저장 (애플리케이션 컨텍스트를 통해 전달하는 것이 더 나은 방법일 수 있음)
 parser: TradeCommandParser
 executor: TradeExecutor
