@@ -325,20 +325,40 @@ class TradeExecutor:
     def __init__(self, exchange_id: str, config: Dict[str, Any]):
         self.exchange_id = exchange_id
         self.config = config
+        self.quote_currency = self._get_quote_currency()
+        self.exchange = self._initialize_exchange()
+
+    def _initialize_exchange(self) -> ccxt.Exchange:
+        """거래소 ID와 설정에 따라 ccxt 거래소 인스턴스를 생성하고 초기화합니다."""
+        exchange_id_for_ccxt = self.exchange_id.replace('_testnet', '')
+        is_testnet = self.exchange_id.endswith('_testnet')
+
         try:
-            exchange_class = getattr(ccxt, self.exchange_id)
-            self.exchange = exchange_class(self.config.get('ccxt', {}))
-            self.exchange.timeout = 30000  # 30초
+            exchange_class = getattr(ccxt, exchange_id_for_ccxt)
+            exchange = exchange_class(self.config.get('ccxt', {}))
+            exchange.timeout = 30000  # 30초
+
+            if is_testnet:
+                exchange.set_sandbox_mode(True)
+                logging.info(f"Initialized {exchange_id_for_ccxt.capitalize()} in testnet mode.")
+            else:
+                logging.info(f"Initialized {exchange_id_for_ccxt.capitalize()} in mainnet mode.")
+
+            return exchange
         except Exception as e:
             logging.error(f"Failed to initialize exchange {self.exchange_id}: {e}")
             raise
 
     def _get_quote_currency(self) -> str:
-        """현재 거래소에 맞는 기본 견적 통화(quote currency)를 반환합니다."""
-        if self.exchange_id in ['upbit', 'bithumb']:
-            return 'KRW'
-        # 기본값은 USDT로 설정 (Binance 등)
-        return 'USDT'
+        """설정에서 현재 거래소의 기본 통화를 가져옵니다."""
+        try:
+            return self.config['exchange_settings'][self.exchange_id]['quote_currency']
+        except KeyError:
+            logging.warning(
+                f"'{self.exchange_id}'에 대한 'quote_currency' 설정이 없습니다. "
+                f"기본값으로 'USDT'를 사용합니다."
+            )
+            return "USDT"
 
     def get_current_price(self, coin_symbol: str) -> Optional[float]:
         """지정된 코인의 현재 가격을 가져옵니다."""

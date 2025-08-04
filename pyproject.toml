@@ -24,6 +24,7 @@ nlptrade-bot = "nlptrade.bot:main"
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.4.1"
 autopep8 = "^2.3.2"
+pytest-mock = "^3.14.1"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

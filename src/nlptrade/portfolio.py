@@ -17,37 +17,47 @@ class PortfolioManager:
     사용자의 거래소 포트폴리오(계좌 잔고)를 관리합니다.
     API 키는 설정 파일에서 로드합니다.
     """
-    def __init__(self, exchange_id: str, config: Dict[str, Any]):
+    def __init__(self, exchange_id: str, config: Dict[str, Any], use_testnet: bool = False):
         """
         PortfolioManager를 초기화합니다.
 
         Args:
             exchange_id: 사용할 거래소의 ID (예: 'binance', 'upbit').
             config: 전체 설정 객체. 'exchanges' 키 아래에 거래소별 설정이 있어야 합니다.
+            use_testnet: 테스트넷 사용 여부. 바이낸스에만 적용됩니다.
         """
         self.exchange_id = exchange_id
-        self.exchange: Optional[Exchange] = self._initialize_exchange(exchange_id, config)
+        self.use_testnet = use_testnet
+        self.exchange: Optional[Exchange] = self._initialize_exchange(exchange_id, config, use_testnet)
         self.balance = self._fetch_balance()
 
-    def _initialize_exchange(self, exchange_id: str, config: Dict[str, Any]) -> Optional[Exchange]:
+    def _initialize_exchange(self, exchange_id: str, config: Dict[str, Any], use_testnet: bool) -> Optional[Exchange]:
         """거래소 ID와 설정에 따라 ccxt 거래소 인스턴스를 생성하고 초기화합니다."""
         exchanges_config = config.get("exchanges", {})
-        exchange_config = exchanges_config.get(exchange_id)
+        
+        # 테스트넷 사용 시 설정 키를 변경합니다.
+        if use_testnet and exchange_id == 'binance':
+            config_key = 'binance_testnet'
+        else:
+            config_key = exchange_id
+
+        exchange_config = exchanges_config.get(config_key)
 
         if not exchange_config:
-            logging.warning(f"'{exchange_id}'에 대한 설정이 'exchanges' 섹션에 없습니다. 포트폴리오 기능이 비활성화됩니다.")
+            logging.warning(f"'{config_key}'에 대한 설정이 'exchanges' 섹션에 없습니다. 포트폴리오 기능이 비활성화됩니다.")
             return None
-
-        use_testnet = exchange_config.get("use_testnet", False)
 
         # 테스트넷은 현재 바이낸스만 지원합니다.
         if use_testnet and exchange_id != 'binance':
             logging.warning(f"'{exchange_id}' 거래소는 테스트넷을 지원하지 않습니다. 메인넷으로 계속 진행합니다.")
             use_testnet = False
 
-        api_key = exchange_config.get("testnet_api_key") if use_testnet else exchange_config.get("api_key")
-        secret_key = exchange_config.get("testnet_secret_key") if use_testnet else exchange_config.get("secret_key")
-        network_name = f"{exchange_id.capitalize()} {'Testnet' if use_testnet else 'Mainnet'}"
+        api_key = exchange_config.get("api_key")
+        secret_key = exchange_config.get("secret_key")
+        
+        network_name = f"{exchange_id.capitalize()}"
+        if exchange_id == 'binance':
+            network_name += " Testnet" if use_testnet else " Mainnet"
 
         if not api_key or not secret_key:
             logging.warning(f"{network_name} API 키가 설정 파일에 없습니다. 포트폴리오 기능이 비활성화됩니다.")

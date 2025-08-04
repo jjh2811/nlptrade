@@ -63,9 +63,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def exchange_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/exchange 명령어 핸들러 - 거래소 선택 버튼 표시"""
     keyboard = [
-        [InlineKeyboardButton("Binance", callback_data='set_exchange_binance')],
-        [InlineKeyboardButton("Upbit", callback_data='set_exchange_upbit')],
-        [InlineKeyboardButton("Bithumb", callback_data='set_exchange_bithumb')],
+        [
+            InlineKeyboardButton("Binance", callback_data='set_exchange_binance_mainnet'),
+            InlineKeyboardButton("Binance Testnet", callback_data='set_exchange_binance_testnet'),
+        ],
+        [
+            InlineKeyboardButton("Upbit", callback_data='set_exchange_upbit'),
+            InlineKeyboardButton("Bithumb", callback_data='set_exchange_bithumb'),
+        ],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     if not update.message:
@@ -79,36 +84,43 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await query.answer()
 
     if query.data and query.data.startswith('set_exchange_'):
-        exchange_id = query.data.replace('set_exchange_', '')
-        logger.info(f"Setting exchange to {exchange_id}")
+        parts = query.data.replace('set_exchange_', '').split('_')
+        exchange_id = parts[0]
+        is_testnet = len(parts) > 1 and parts[1] == 'testnet'
+        
+        network_name = f"{exchange_id.capitalize()}"
+        if exchange_id == 'binance':
+            network_name += " Testnet" if is_testnet else " Mainnet"
+
+        logger.info(f"Setting exchange to {network_name}")
 
         try:
-            # config는 bot_data에서 가져옵니다.
             config = context.bot_data['config']
             
-            # 새 거래소의 코인 목록을 가져옵니다.
             exchange_coins = fetch_exchange_coins(exchange_id)
             config["coins"] = exchange_coins
 
-            # 새 거래소 ID로 컴포넌트들을 다시 초기화합니다.
-            portfolio_manager = PortfolioManager(exchange_id, config)
+            # 포트폴리오 매니저를 올바른 테스트넷 설정으로 초기화
+            portfolio_manager = PortfolioManager(exchange_id, config, use_testnet=is_testnet)
+            
+            # 다른 컴포넌트들도 새 거래소 설정으로 다시 초기화
             executor = TradeExecutor(exchange_id, config)
             extractor = EntityExtractor(config)
             parser = TradeCommandParser(extractor, portfolio_manager, executor)
 
-            # bot_data를 업데이트합니다.
             context.bot_data.update({
                 "parser": parser,
                 "executor": executor,
                 "portfolio_manager": portfolio_manager,
-                "exchange_id": exchange_id
+                "exchange_id": exchange_id,
+                "is_testnet": is_testnet, # 테스트넷 상태 저장
             })
 
-            await query.edit_message_text(text=f"거래소가 {exchange_id}(으)로 설정되었습니다.")
+            await query.edit_message_text(text=f"거래소가 {network_name}(으)로 설정되었습니다.")
 
         except Exception as e:
-            logger.error(f"Error setting exchange to {exchange_id}: {e}")
-            await query.edit_message_text(text=f"{exchange_id} 거래소를 설정하는 중 오류가 발생했습니다: {e}")
+            logger.error(f"Error setting exchange to {network_name}: {e}")
+            await query.edit_message_text(text=f"{network_name} 거래소를 설정하는 중 오류가 발생했습니다: {e}")
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

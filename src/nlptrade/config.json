@@ -3,6 +3,9 @@
     "binance": {
       "quote_currency": "USDT"
     },
+    "binance_testnet": {
+      "quote_currency": "USDT"
+    },
     "upbit": {
       "quote_currency": "KRW"
     },
