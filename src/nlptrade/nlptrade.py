@@ -387,7 +387,14 @@ def load_secrets(secrets_path: Path) -> Dict[str, Any]:
         with open(secrets_path, 'r', encoding='utf-8') as f:
             return json.load(f)
     except FileNotFoundError:
-        logging.warning(f"비밀 설정 파일을 찾을 수 없습니다: {secrets_path}. API 키가 필요한 기능은 동작하지 않을 수 있습니다.")
+        example_secrets_path = secrets_path.with_name(secrets_path.name + '.example')
+        if example_secrets_path.exists():
+            logging.warning(
+                f"비밀 설정 파일({secrets_path})을 찾을 수 없습니다. "
+                f"예제 파일 '{example_secrets_path}'을 '{secrets_path.name}'으로 복사한 후, API 키 등 필요한 정보를 입력해주세요."
+            )
+        else:
+            logging.warning(f"비밀 설정 파일을 찾을 수 없습니다: {secrets_path}. API 키가 필요한 기능은 동작하지 않을 수 있습니다.")
         return {}  # 키 파일이 없어도 프로그램은 계속 실행되도록 빈 딕셔너리 반환
     except json.JSONDecodeError:
         logging.error(f"비밀 설정 파일의 형식이 올바르지 않습니다: {secrets_path}")
