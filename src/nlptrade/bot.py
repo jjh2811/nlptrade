@@ -14,12 +14,7 @@ from telegram.ext import (
 )
 
 from nlptrade.nlptrade import (
-    EntityExtractor,
-    PortfolioManager,
-    TradeCommandParser,
-    TradeExecutor,
-    fetch_exchange_coins,
-    initialize_exchange,
+    setup_trader,
     load_config,
     load_secrets,
 )
@@ -95,7 +90,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if query.data and query.data.startswith('set_exchange_'):
         exchange_id = query.data.replace('set_exchange_', '')
-        is_testnet = exchange_id.endswith('_testnet')
 
         network_name = f"{exchange_id.replace('_testnet', '').capitalize()}"
         if 'testnet' in exchange_id:
@@ -105,21 +99,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
         try:
             config = context.bot_data['config']
-            exchange = initialize_exchange(exchange_id, config, is_testnet)
-
-            exchange_coins = fetch_exchange_coins(exchange)
-            config["coins"] = exchange_coins
-
-            portfolio_manager = PortfolioManager(exchange)
-            executor = TradeExecutor(exchange, config)
-            extractor = EntityExtractor(config)
-            parser = TradeCommandParser(extractor, portfolio_manager, executor)
+            parser, executor, exchange = setup_trader(exchange_id, config)
 
             context.bot_data.update({
                 "parser": parser,
                 "executor": executor,
-                "portfolio_manager": portfolio_manager,
-                "exchange_id": exchange_id,
+                "exchange_id": exchange.id,
             })
 
             await query.edit_message_text(text=f"거래소가 {network_name}(으)로 설정되었습니다.")
@@ -176,26 +161,17 @@ def main() -> None:
     application = Application.builder().token(telegram_token).build()
 
     default_exchange_id = config.get("default_exchange", "binance")
-    is_testnet = default_exchange_id.endswith('_testnet')
 
     try:
-        exchange = initialize_exchange(default_exchange_id, config, is_testnet)
-        exchange_coins = fetch_exchange_coins(exchange)
-        config["coins"] = exchange_coins
-    except Exception:
-        logger.error(f"{default_exchange_id.capitalize()}에서 코인 목록을 가져올 수 없어 봇을 시작할 수 없습니다.")
+        parser, executor, exchange = setup_trader(default_exchange_id, config)
+    except Exception as e:
+        logger.error(f"봇 초기화 실패: {e}")
         return
-
-    portfolio_manager = PortfolioManager(exchange)
-    executor = TradeExecutor(exchange, config)
-    extractor = EntityExtractor(config)
-    parser = TradeCommandParser(extractor, portfolio_manager, executor)
 
     application.bot_data['config'] = config
     application.bot_data['parser'] = parser
     application.bot_data['executor'] = executor
-    application.bot_data['portfolio_manager'] = portfolio_manager
-    application.bot_data['exchange_id'] = default_exchange_id
+    application.bot_data['exchange_id'] = exchange.id
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))

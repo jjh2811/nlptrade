@@ -3,7 +3,7 @@ import json
 import logging
 from pathlib import Path
 import re
-from typing import Any, Dict, List, Optional, Protocol
+from typing import Any, Dict, List, Optional, Protocol, Tuple
 import unicodedata
 
 import ccxt
@@ -410,6 +410,22 @@ def fetch_exchange_coins(exchange: Exchange) -> List[str]:
         raise
 
 
+def setup_trader(exchange_id: str, config: Dict[str, Any]) -> Tuple[TradeCommandParser, TradeExecutor, Exchange]:
+    """거래 관련 객체들을 초기화하고 설정합니다."""
+    use_testnet = exchange_id.endswith('_testnet')
+
+    exchange = initialize_exchange(exchange_id, config, use_testnet)
+    exchange_coins = fetch_exchange_coins(exchange)
+    config["coins"] = exchange_coins
+
+    portfolio_manager = PortfolioManager(exchange)
+    executor = TradeExecutor(exchange, config)
+    extractor = EntityExtractor(config)
+    parser = TradeCommandParser(extractor, portfolio_manager, executor)
+
+    return parser, executor, exchange
+
+
 def main():
     """메인 실행 함수: 설정을 로드하고 대화형으로 명령을 처리합니다."""
     config_path = Path(__file__).parent / "config.json"
@@ -419,20 +435,12 @@ def main():
     config.update(secrets)
 
     default_exchange_id = config.get("default_exchange", "binance")
-    use_testnet = default_exchange_id.endswith('_testnet')
 
     try:
-        exchange = initialize_exchange(default_exchange_id, config, use_testnet)
-        exchange_coins = fetch_exchange_coins(exchange)
-        config["coins"] = exchange_coins
-    except Exception:
-        logging.error(f"Could not start the bot because the coin list could not be fetched from {default_exchange_id.capitalize()}.")
+        parser, executor, _ = setup_trader(default_exchange_id, config)
+    except Exception as e:
+        logging.error(f"거래기 초기화 실패: {e}")
         return
-
-    portfolio_manager = PortfolioManager(exchange)
-    executor = TradeExecutor(exchange, config)
-    extractor = EntityExtractor(config)
-    parser = TradeCommandParser(extractor, portfolio_manager, executor)
 
     print("--- NLP Trade-bot 시작 --- (종료하려면 'exit' 또는 'quit' 입력)")
     while True:
