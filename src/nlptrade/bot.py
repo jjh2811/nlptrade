@@ -1,6 +1,7 @@
 import json
 import logging
 from pathlib import Path
+from re import I
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -109,14 +110,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
             config = context.bot_data['config']
 
-            exchange_coins = fetch_exchange_coins(exchange_id)
+            exchange_coins = fetch_exchange_coins(exchange_id, use_testnet=is_testnet)
             config["coins"] = exchange_coins
-
+            print(exchange_id)
             # 포트폴리오 매니저를 올바른 테스트넷 설정으로 초기화
             portfolio_manager = PortfolioManager(exchange_id, config, use_testnet=is_testnet)
 
             # 다른 컴포넌트들도 새 거래소 설정으로 다시 초기화
-            executor = TradeExecutor(exchange_id, config)
+            executor = TradeExecutor(exchange_id, config, use_testnet=is_testnet)
             extractor = EntityExtractor(config)
             parser = TradeCommandParser(extractor, portfolio_manager, executor)
 

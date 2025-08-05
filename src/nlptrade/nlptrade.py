@@ -280,27 +280,28 @@ class TradeExecutor:
     참고: 이 클래스는 실제 거래소 API와 연동하는 로직이 들어갈 위치의 예시입니다.
     """
 
-    def __init__(self, exchange_id: str, config: Dict[str, Any]):
+    def __init__(self, exchange_id: str, config: Dict[str, Any], use_testnet: bool = False):
         self.exchange_id = exchange_id
         self.config = config
         self.quote_currency = self._get_quote_currency()
-        self.exchange = self._initialize_exchange()
+        self.exchange = self._initialize_exchange(use_testnet)
 
-    def _initialize_exchange(self) -> Exchange:
+    def _initialize_exchange(self, use_testnet: bool) -> Exchange:
         """거래소 ID와 설정에 따라 ccxt 거래소 인스턴스를 생성하고 초기화합니다."""
-        exchange_id_for_ccxt = self.exchange_id.replace('_testnet', '')
-        is_testnet = self.exchange_id.endswith('_testnet')
+        #exchange_id_for_ccxt = self.exchange_id.replace('_testnet', '')
+        #is_testnet = self.exchange_id.endswith('_testnet')
 
         try:
-            exchange_class = getattr(ccxt, exchange_id_for_ccxt)
+            # exchange_class = getattr(ccxt, exchange_id_for_ccxt)
+            exchange_class = getattr(ccxt, self.exchange_id)
             exchange = exchange_class(self.config.get('ccxt', {}))
             exchange.timeout = 30000  # 30초
 
-            if is_testnet:
+            if use_testnet:
                 exchange.set_sandbox_mode(True)
-                logging.info(f"Initialized {exchange_id_for_ccxt.capitalize()} in testnet mode.")
+                logging.info(f"Initialized {self.exchange_id.capitalize()} in testnet mode.")
             else:
-                logging.info(f"Initialized {exchange_id_for_ccxt.capitalize()} in mainnet mode.")
+                logging.info(f"Initialized {self.exchange_id.capitalize()} in mainnet mode.")
 
             return exchange
         except Exception as e:
@@ -390,13 +391,20 @@ def load_secrets(secrets_path: Path) -> Dict[str, Any]:
         raise
 
 
-def fetch_exchange_coins(exchange_id: str) -> List[str]:
+def fetch_exchange_coins(exchange_id: str, use_testnet: bool = False) -> List[str]:
     """ccxt를 사용하여 지정된 거래소의 모든 코인 목록을 가져옵니다."""
     try:
         logging.info(f"Fetching coin list from {exchange_id.capitalize()}...")
         exchange_class = getattr(ccxt, exchange_id)
         exchange = exchange_class()
         exchange.timeout = 30000
+
+        if use_testnet:
+            exchange.set_sandbox_mode(True)
+            logging.info(f"Fetching coins from {exchange_id.capitalize()} in testnet mode.")
+        else:
+            logging.info(f"Fetching coins from {exchange_id.capitalize()} in mainnet mode.")
+
         markets = exchange.load_markets()
         base_coins = [market['base'] for market in markets.values()]
         unique_base_coins = sorted(list(set(base_coins)))
