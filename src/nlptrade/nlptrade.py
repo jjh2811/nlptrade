@@ -131,11 +131,11 @@ class EntityExtractor:
         return None
 
     def _extract_price(self, text: str) -> Optional[float]:
-        """텍스트에서 지정가 가격을 추출 (e.g., '1000원에', '50달러에', '50usdt에')"""
+        """텍스트에서 지정가 가격을 추출 (e.g., '1000원에', '50달러에', '50usdt에', '100에')"""
         # '현재가에'가 있으면 가격 추출을 무시
         if '현재가에' in text:
             return None
-        price_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:원|달러|usdt)에', text, re.IGNORECASE)
+        price_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:원|달러|usdt)?에', text, re.IGNORECASE)
         if price_match:
             return float(price_match.group(1))
         return None
