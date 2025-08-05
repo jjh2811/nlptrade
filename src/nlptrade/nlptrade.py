@@ -93,7 +93,7 @@ class EntityExtractor:
         """텍스트에서 코인 심볼 또는 한글 이름(별칭)을 추출"""
         # 1. 영문 심볼 우선 추출 (e.g., BTC, ETH)
         # SUSHIDOWN, 1000SATS 등 더 길거나 숫자가 포함된 심볼을 처리하도록 정규식 수정
-        symbol_pattern = r'\b[A-Z0-9]{2,12}\b'
+        symbol_pattern = r'\b[A-Z0-9]{2,12}(?![A-Z0-9])'
         symbol_match = re.search(symbol_pattern, text.upper())
         if symbol_match:
             input_symbol = symbol_match.group(0)
