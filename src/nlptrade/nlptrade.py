@@ -46,12 +46,21 @@ class EntityExtractor:
         self.coins: List[str] = config.get("coins", [])
         self.intent_map: Dict[str, str] = config.get("intent_map", {})
         self.custom_mapping: Dict[str, str] = config.get("custom_mapping", {})
+        self._update_max_coin_len()
+
+    def _update_max_coin_len(self):
+        if self.coins:
+            self.max_coin_len = max(len(c) for c in self.coins)
+        else:
+            self.max_coin_len = 12  # 기본값
+        logging.info(f"EntityExtractor: 코인 심볼 최대 길이 인식 수치가 {self.max_coin_len}(으)로 설정되었습니다.")
 
     def refresh_coins(self, executor: 'TradeExecutor'):
         """거래소에서 최신 코인 목록을 가져와 업데이트합니다."""
         try:
             updated_coins = fetch_exchange_coins(executor.exchange_id)
             self.coins = updated_coins
+            self._update_max_coin_len()
             logging.info(f"EntityExtractor: 코인 목록이 거래소에서 성공적으로 업데이트되었습니다. 총 {len(self.coins)}개 코인.")
         except Exception as e:
             logging.error(f"EntityExtractor: 코인 목록 업데이트 실패: {e}")
@@ -74,7 +83,6 @@ class EntityExtractor:
 
     def _extract_intent(self, text: str) -> Optional[str]:
         """텍스트에서 거래 의도(매수/매도)를 추출"""
-        # MeCab이 '사줘' -> ['사', '줘']로 분리하여 기존 로직에서 매칭이 어려운 문제 해결
         # 간단한 명령어에서는 키워드 검색이 더 안정적임
         for keyword, intent in self.intent_map.items():
             if keyword in text:
@@ -86,8 +94,7 @@ class EntityExtractor:
     def _extract_coin(self, text: str) -> Optional[str]:
         """텍스트에서 코인 심볼 또는 한글 이름(별칭)을 추출"""
         # 1. 영문 심볼 우선 추출 (e.g., BTC, ETH)
-        # SUSHIDOWN, 1000SATS 등 더 길거나 숫자가 포함된 심볼을 처리하도록 정규식 수정
-        symbol_pattern = r'\b[A-Z0-9]{2,12}(?![A-Z0-9])'
+        symbol_pattern = rf'\b[A-Z0-9]{{2,{self.max_coin_len}}}(?![A-Z0-9])'
         symbol_match = re.search(symbol_pattern, text.upper())
         if symbol_match:
             input_symbol = symbol_match.group(0)
@@ -96,12 +103,11 @@ class EntityExtractor:
                 return found_coin
 
         # 2. 영문 심볼이 없는 경우, 등록된 한글/커스텀 매핑 키워드 검색
-        # 긴 이름부터 매칭해야 '비트코인 캐시'와 '비트코인'을 구분할 수 있음
         sorted_custom_keys = sorted(self.custom_mapping.keys(), key=len, reverse=True)
         for coin_name in sorted_custom_keys:
             if coin_name in text:
-                # custom_mapping에 있는 키는 find_closest_symbol에서 바로 찾아줌
                 return self.find_closest_symbol(coin_name)
+
         return None
 
     def _extract_amount(self, text: str) -> Optional[float]:
@@ -113,7 +119,6 @@ class EntityExtractor:
 
     def _extract_price(self, text: str) -> Optional[float]:
         """텍스트에서 지정가 가격을 추출 (e.g., '1000원에', '50달러에', '50usdt에', '100에')"""
-        # '현재가에'가 있으면 가격 추출을 무시
         if '현재가에' in text:
             return None
         price_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:원|달러|usdt)?에', text, re.IGNORECASE)
@@ -123,12 +128,10 @@ class EntityExtractor:
 
     def _extract_total_cost(self, text: str) -> Optional[float]:
         """텍스트에서 '얼마어치' 또는 '얼마' 같은 총 비용을 추출"""
-        # '...어치'를 먼저 찾고, 없으면 '...'을 찾는다.
         cost_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:원|달러|usdt)어치', text, re.IGNORECASE)
         if cost_match:
             return float(cost_match.group(1))
 
-        # '...에'가 붙지 않은 경우를 비용으로 간주
         cost_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:원|달러|usdt)(?!\s*에)', text, re.IGNORECASE)
         if cost_match:
             return float(cost_match.group(1))
@@ -141,13 +144,11 @@ class EntityExtractor:
 
     def _extract_relative_amount(self, text: str) -> Optional[Dict[str, Any]]:
         """텍스트에서 '전부', '절반', '20%' 같은 상대적 수량을 추출"""
-        # 키워드 기반 추출
         if '전부' in text or '전량' in text:
             return {'type': 'percentage', 'value': 100.0}
         if '절반' in text or '반' in text:
             return {'type': 'percentage', 'value': 50.0}
 
-        # 퍼센트 기반 추출
         percentage_match = re.search(r'(\d+\.?\d*)\s*(%|퍼센트)', text)
         if percentage_match:
             return {'type': 'percentage', 'value': float(percentage_match.group(1))}
@@ -169,11 +170,9 @@ class EntityExtractor:
             "order_type": "market"
         }
 
-        # 절대적 수량이 명시된 경우, 상대적 수량은 무시
         if entities["amount"] is not None:
             entities["relative_amount"] = None
 
-        # 가격이 있거나 '현재가에' 주문이면 지정가
         if entities["price"] is not None or entities["current_price_order"]:
             entities["order_type"] = "limit"
 
@@ -182,14 +181,6 @@ class EntityExtractor:
 
 class TradeCommandParser:
     def __init__(self, extractor: EntityExtractor, portfolio_manager: PortfolioManager, executor: 'TradeExecutor'):
-        """
-        TradeCommandParser를 초기화합니다.
-
-        Args:
-            extractor: 엔터티 추출을 담당하는 EntityExtractor 객체.
-            portfolio_manager: 포트폴리오 관리를 담당하는 PortfolioManager 객체.
-            executor: TradeExecutor 객체.
-        """
         self.extractor = extractor
         self.portfolio_manager = portfolio_manager
         self.executor = executor
@@ -198,24 +189,21 @@ class TradeCommandParser:
         """주어진 텍스트를 파싱하여 TradeCommand 객체로 변환합니다."""
         entities = self.extractor.extract_entities(text)
 
-        # 필수 엔터티 검증
         if not entities["intent"] or not entities["coin"]:
             logging.warning(
                 f"Parse failed for text: '{text}'. "
                 f"Missing intent ('{entities['intent']}') or coin ('{entities['coin']}')."
             )
-            # 코인 정보가 없을 경우, 거래소에서 코인 목록을 새로고침하고 다시 시도
             if not entities["coin"]:
                 logging.info("코인 정보를 찾을 수 없습니다. 거래소에서 코인 목록을 새로고침합니다.")
                 self.extractor.refresh_coins(self.executor)
-                entities = self.extractor.extract_entities(text)  # 다시 엔터티 추출 시도
+                entities = self.extractor.extract_entities(text)
                 if not entities["coin"]:
                     logging.warning(f"코인 목록 새로고침 후에도 코인 정보를 찾을 수 없습니다: '{text}'.")
                     return None
             else:
                 return None
 
-        # '현재가에' 주문 처리
         if entities.get("current_price_order"):
             coin_symbol = str(entities["coin"])
             intent = str(entities["intent"])
@@ -232,7 +220,6 @@ class TradeCommandParser:
                 logging.error(f"'{coin_symbol}'의 호가를 가져올 수 없어 '현재가에' 주문을 처리할 수 없습니다.")
                 return None
 
-        # 수량 정보 검증 (절대 수량, 상대 수량, 총 비용 중 하나는 있어야 함)
         if entities["amount"] is None and entities["relative_amount"] is None and entities["total_cost"] is None:
             logging.warning(
                 f"Parse failed for text: '{text}'. "
@@ -243,13 +230,10 @@ class TradeCommandParser:
         final_amount = entities.get("amount")
         total_cost = entities.get("total_cost")
 
-        # 총 비용이 명시된 경우, 수량 계산
         if total_cost is not None:
             coin_symbol = str(entities["coin"])
-            # '현재가에' 주문으로 가격이 이미 결정되었는지 확인
             price_to_use = entities.get("price")
 
-            # 가격이 아직 결정되지 않았다면 (e.g. "비트코인 10000원어치"), 현재가 조회
             if price_to_use is None:
                 price_to_use = self.executor.get_current_price(coin_symbol)
 
@@ -261,7 +245,6 @@ class TradeCommandParser:
                 logging.error(f"'{coin_symbol}'의 현재 가격을 가져올 수 없어 총 비용 기반 주문을 처리할 수 없습니다.")
                 return None
 
-        # 상대적 수량이 감지된 경우, 실제 수량으로 변환
         relative_amount_info = entities.get("relative_amount")
         if relative_amount_info:
             coin_symbol = str(entities["coin"])
@@ -277,7 +260,6 @@ class TradeCommandParser:
                 final_amount = calculated_amount
                 logging.info(f"계산된 수량: {percentage}% of {current_holding} {coin_symbol} -> {final_amount} {coin_symbol}")
 
-        # 계산된 최종 수량이 0 이하인 경우 거래 중단
         if final_amount is not None and final_amount <= 0:
             logging.warning(f"계산된 거래 수량이 0 이하({final_amount})이므로 거래를 진행할 수 없습니다.")
             return None
@@ -352,12 +334,10 @@ class TradeExecutor:
         quote_currency = self._get_quote_currency()
         market_symbol = f'{coin_symbol}/{quote_currency}'
         try:
-            # 페어로 오더북 조회
             order_book = self.exchange.fetch_order_book(market_symbol, limit=1)
-            # 오더북에 매수/매도 오더가 있는지 확인
             if order_book['bids'] and order_book['asks']:
-                best_bid = order_book['bids'][0][0]  # 가장 높은 매수 가격
-                best_ask = order_book['asks'][0][0]  # 가장 낮은 매도 가격
+                best_bid = order_book['bids'][0][0]
+                best_ask = order_book['asks'][0][0]
                 logging.info(f"Order book for {market_symbol}: Best Bid={best_bid}, Best Ask={best_ask}")
                 return {'bid': best_bid, 'ask': best_ask}
             else:
@@ -370,7 +350,6 @@ class TradeExecutor:
     def execute(self, command: TradeCommand) -> Dict:
         """주어진 명령을 실행하고 결과를 JSON 호환 딕셔너리로 반환합니다."""
         logging.info(f"Executing command: {command}")
-        # 실제 거래 로직 추가 (예: self.exchange.create_market_buy_order(...))
         result = {
             "status": "success",
             "command_executed": command.__dict__
@@ -405,7 +384,7 @@ def load_secrets(secrets_path: Path) -> Dict[str, Any]:
             )
         else:
             logging.warning(f"비밀 설정 파일을 찾을 수 없습니다: {secrets_path}. API 키가 필요한 기능은 동작하지 않을 수 있습니다.")
-        return {}  # 키 파일이 없어도 프로그램은 계속 실행되도록 빈 딕셔너리 반환
+        return {}
     except json.JSONDecodeError:
         logging.error(f"비밀 설정 파일의 형식이 올바르지 않습니다: {secrets_path}")
         raise
@@ -417,8 +396,7 @@ def fetch_exchange_coins(exchange_id: str) -> List[str]:
         logging.info(f"Fetching coin list from {exchange_id.capitalize()}...")
         exchange_class = getattr(ccxt, exchange_id)
         exchange = exchange_class()
-        # 네트워크 타임아웃 설정 (단위: ms)
-        exchange.timeout = 30000  # 30초
+        exchange.timeout = 30000
         markets = exchange.load_markets()
         base_coins = [market['base'] for market in markets.values()]
         unique_base_coins = sorted(list(set(base_coins)))
@@ -426,7 +404,6 @@ def fetch_exchange_coins(exchange_id: str) -> List[str]:
         return unique_base_coins
     except Exception as e:
         logging.error(f"Failed to fetch coin list from {exchange_id.capitalize()}: {e}")
-        # 오류 발생 시 예외를 다시 발생시켜 main 함수에서 처리하도록 함
         raise
 
 
@@ -438,24 +415,19 @@ def main():
     secrets = load_secrets(secrets_path)
     config.update(secrets)
 
-    # 1. 기본 거래소 ID를 설정에서 가져와 코인 목록을 동적으로 로드
     default_exchange_id = config.get("default_exchange", "binance")
     try:
         exchange_coins = fetch_exchange_coins(default_exchange_id)
         config["coins"] = exchange_coins
     except Exception:
         logging.error(f"Could not start the bot because the coin list could not be fetched from {default_exchange_id.capitalize()}.")
-        return  # 프로그램 종료
+        return
 
-    # 2. 의존성 주입을 사용하여 컴포넌트 초기화
-    # 2a. 포트폴리오 매니저 초기화
     portfolio_manager = PortfolioManager(default_exchange_id, config)
     executor = TradeExecutor(default_exchange_id, config)
     extractor = EntityExtractor(config)
-    # 2b. 파서에 extractor와 portfolio_manager 주입
     parser = TradeCommandParser(extractor, portfolio_manager, executor)
 
-    # 3. 대화형으로 명령어 처리
     print("--- NLP Trade-bot 시작 --- (종료하려면 'exit' 또는 'quit' 입력)")
     while True:
         try:
@@ -466,13 +438,11 @@ def main():
             command = parser.parse(text)
             if command:
                 result = executor.execute(command)
-                # ensure_ascii=False로 한글 깨짐 방지
                 print(f"[실행 결과]: {json.dumps(result, indent=2, ensure_ascii=False)}")
             else:
                 print("[실행 결과]: 명령을 해석하지 못했습니다.")
 
         except (KeyboardInterrupt, EOFError):
-            # Ctrl+C 또는 Ctrl+D로 종료
             break
         except Exception as e:
             logging.error(f"오류 발생: {e}")
