@@ -19,7 +19,6 @@ def config():
             "매수": "buy", "구매": "buy", "사줘": "buy",
             "매도": "sell", "판매": "sell", "팔아": "sell"
         },
-        "fuzzy_threshold": 80,
         "custom_mapping": {
             "BCT": "BTC", "BTCC": "BTC", "BTCUSDT": "BTC",
             "비트코인": "BTC", "이더리움": "ETH", "이더": "ETH",
@@ -151,7 +150,6 @@ def test_parse_relative_amount_failure_no_balance(parser, portfolio_manager):
     ("bct", "BTC"),         # 소문자 + 커스텀 매핑
     ("비트코인", "BTC"),     # 한글 이름
     ("이더", "ETH"),         # 한글 별칭
-    ("도지코인", "DOGE"),     # Fuzzy-matching 대상
     ("XYZ", None),          # 지원하지 않는 심볼
     ("", None),             # 빈 문자열
     ("BTCUSDT", "BTC")

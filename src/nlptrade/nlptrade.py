@@ -75,38 +75,18 @@ class EntityExtractor:
         if input_symbol in self.custom_mapping:
             logging.info(f"Custom mapping found: {input_symbol} -> {self.custom_mapping[input_symbol]}")
             return self.custom_mapping[input_symbol]
-
-        max_ratio = 0
-        closest_symbol = None
-        for symbol in self.coins:
-            ratio = fuzz.WRatio(input_symbol, symbol)
-            if ratio > max_ratio and ratio >= self.fuzzy_threshold:
-                max_ratio = ratio
-                closest_symbol = symbol
-
-        if closest_symbol:
-            # 추가적인 검증 로직: 'BAI' -> 'A' 와 같이, 길이 차이가 크고 매칭된 심볼이 매우 짧은 경우의 오류를 방지.
-            # 1. 입력과 찾은 심볼의 길이 차이가 2 이상이고,
-            # 2. 찾은 심볼의 길이가 2 이하인 경우, 잘못된 매칭으로 간주.
-            len_diff = abs(len(input_symbol) - len(closest_symbol))
-            if len_diff >= 2 and len(closest_symbol) <= 2:
-                logging.warning(
-                    f"Fuzzy match for '{input_symbol}' -> '{closest_symbol}' (ratio: {max_ratio}) rejected due to "
-                    f"significant length difference with a very short symbol."
-                )
-                return None  # 매칭 거부
-
-            logging.info(f"Fuzzy matching: '{input_symbol}' -> '{closest_symbol}' (ratio: {max_ratio})")
-        return closest_symbol
+        
+        return None
 
     def _extract_intent(self, text: str) -> Optional[str]:
         """텍스트에서 거래 의도(매수/매도)를 추출"""
         # MeCab이 '사줘' -> ['사', '줘']로 분리하여 기존 로직에서 매칭이 어려운 문제 해결
         # 간단한 명령어에서는 키워드 검색이 더 안정적임
         for keyword, intent in self.intent_map.items():
-            if keyword in text:
-                logging.info(f"Intent matched: '{keyword}' in text -> '{intent}'")
-                return intent
+           if keyword in text:
+               logging.info(f"Intent matched: '{keyword}' in text -> '{intent}'")
+               return intent
+
         return None
 
     def _extract_coin(self, text: str) -> Optional[str]:
@@ -131,14 +111,14 @@ class EntityExtractor:
 
         # 3. 등록되지 않은 한글 이름의 경우, MeCab으로 명사를 추출하여 fuzzy matching 시도
         tokens = mecab.pos(text)
-        logging.debug(f"Tokens for coin extraction: {tokens}")
+        logging.debug(f"Tokens: {tokens}")
         for token, pos in tokens:
             # 고유명사(NNP) 또는 일반명사(NNG)를 코인 이름 후보로 간주
             if pos.startswith('NN'):  # NNP, NNG 등 명사류
                 # 일반적인 거래 단위 등은 제외
                 if token in ['개', '달러', '시장가', '지정가']:
                     continue
-                found_coin = self.find_closest_symbol(token)
+                found_coin = self.find_closest_symbol(token) # 퍼지 매칭 말고 완전 일치하는 코인 심볼을 찾도록 변경
                 if found_coin:
                     return found_coin
         return None
