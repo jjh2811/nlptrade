@@ -19,6 +19,7 @@ from nlptrade.nlptrade import (
     TradeCommandParser,
     TradeExecutor,
     fetch_exchange_coins,
+    initialize_exchange,
     load_config,
     load_secrets,
 )
@@ -33,10 +34,6 @@ logger = logging.getLogger(__name__)
 # 관련 로거들의 레벨을 WARNING으로 상향 조정합니다.
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("telegram.ext").setLevel(logging.WARNING)
-
-# 전역 변수로 파서와 실행기 저장 (애플리케이션 컨텍스트를 통해 전달하는 것이 더 나은 방법일 수 있음)
-parser: TradeCommandParser
-executor: TradeExecutor
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -74,7 +71,7 @@ async def exchange_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     """/exchange 명령어 핸들러 - 거래소 선택 버튼 표시"""
     keyboard = [
         [
-            InlineKeyboardButton("Binance", callback_data='set_exchange_binance_mainnet'),
+            InlineKeyboardButton("Binance", callback_data='set_exchange_binance'),
             InlineKeyboardButton("Binance Testnet", callback_data='set_exchange_binance_testnet'),
         ],
         [
@@ -97,27 +94,24 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await query.answer()
 
     if query.data and query.data.startswith('set_exchange_'):
-        parts = query.data.replace('set_exchange_', '').split('_')
-        exchange_id = parts[0]
-        is_testnet = len(parts) > 1 and parts[1] == 'testnet'
+        exchange_id = query.data.replace('set_exchange_', '')
+        is_testnet = exchange_id.endswith('_testnet')
 
-        network_name = f"{exchange_id.capitalize()}"
-        if exchange_id == 'binance':
-            network_name += " Testnet" if is_testnet else " Mainnet"
+        network_name = f"{exchange_id.replace('_testnet', '').capitalize()}"
+        if 'testnet' in exchange_id:
+            network_name += " Testnet"
 
         logger.info(f"Setting exchange to {network_name}")
 
         try:
             config = context.bot_data['config']
+            exchange = initialize_exchange(exchange_id, config, is_testnet)
 
-            exchange_coins = fetch_exchange_coins(exchange_id, use_testnet=is_testnet)
+            exchange_coins = fetch_exchange_coins(exchange)
             config["coins"] = exchange_coins
-            print(exchange_id)
-            # 포트폴리오 매니저를 올바른 테스트넷 설정으로 초기화
-            portfolio_manager = PortfolioManager(exchange_id, config, use_testnet=is_testnet)
 
-            # 다른 컴포넌트들도 새 거래소 설정으로 다시 초기화
-            executor = TradeExecutor(exchange_id, config, use_testnet=is_testnet)
+            portfolio_manager = PortfolioManager(exchange)
+            executor = TradeExecutor(exchange, config)
             extractor = EntityExtractor(config)
             parser = TradeCommandParser(extractor, portfolio_manager, executor)
 
@@ -126,7 +120,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 "executor": executor,
                 "portfolio_manager": portfolio_manager,
                 "exchange_id": exchange_id,
-                "is_testnet": is_testnet,  # 테스트넷 상태 저장
             })
 
             await query.edit_message_text(text=f"거래소가 {network_name}(으)로 설정되었습니다.")
@@ -144,7 +137,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     text = update.message.text
     logger.info(f"Received message: {text}")
 
-    # bot_data에서 파서와 실행기를 가져옵니다.
     parser = context.bot_data.get('parser')
     executor = context.bot_data.get('executor')
 
@@ -158,7 +150,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if command:
         try:
             result = executor.execute(command)
-            # JSON 응답을 보기 좋게 포맷팅하여 전송
             response_text = f"<pre>{json.dumps(result, indent=2, ensure_ascii=False)}</pre>"
             await update.message.reply_html(response_text)
         except Exception as e:
@@ -171,7 +162,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 def main() -> None:
     """텔레그램 봇을 시작하고 실행합니다."""
 
-    # 설정 로드
     config_path = Path(__file__).parent / "config.json"
     config = load_config(config_path)
     secrets_path = Path(__file__).parent / "secrets.json"
@@ -183,20 +173,21 @@ def main() -> None:
         logger.error("텔레그램 봇 토큰이 secrets.json 파일에 설정되지 않았습니다.")
         return
 
-    # 텔레그램 봇 애플리케이션 생성
     application = Application.builder().token(telegram_token).build()
 
-    # nlptrade 컴포넌트 초기화 및 bot_data에 저장
     default_exchange_id = config.get("default_exchange", "binance")
+    is_testnet = default_exchange_id.endswith('_testnet')
+
     try:
-        exchange_coins = fetch_exchange_coins(default_exchange_id)
+        exchange = initialize_exchange(default_exchange_id, config, is_testnet)
+        exchange_coins = fetch_exchange_coins(exchange)
         config["coins"] = exchange_coins
     except Exception:
         logger.error(f"{default_exchange_id.capitalize()}에서 코인 목록을 가져올 수 없어 봇을 시작할 수 없습니다.")
         return
 
-    portfolio_manager = PortfolioManager(default_exchange_id, config)
-    executor = TradeExecutor(default_exchange_id, config)
+    portfolio_manager = PortfolioManager(exchange)
+    executor = TradeExecutor(exchange, config)
     extractor = EntityExtractor(config)
     parser = TradeCommandParser(extractor, portfolio_manager, executor)
 
@@ -206,14 +197,12 @@ def main() -> None:
     application.bot_data['portfolio_manager'] = portfolio_manager
     application.bot_data['exchange_id'] = default_exchange_id
 
-    # 핸들러 등록
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("exchange", exchange_command))
     application.add_handler(CallbackQueryHandler(button))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # 봇 실행
     logger.info("Telegram bot is running...")
     application.run_polling()
 

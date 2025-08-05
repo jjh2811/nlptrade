@@ -10,16 +10,11 @@ import ccxt
 from ccxt.base.types import Int, Num, OrderBook, Ticker
 
 from .portfolio import PortfolioManager
+from .types import Exchange
+
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-
-class Exchange(Protocol):
-    """코드에 사용될 ccxt.Exchange의 메서드에 대한 프로토콜 정의(타입 확인용)"""
-
-    def fetch_ticker(self, symbol: str, params={}) -> Ticker: ...
-    def fetch_order_book(self, symbol: str, limit: Int = None, params={}) -> OrderBook: ...
 
 
 @dataclass
@@ -58,7 +53,7 @@ class EntityExtractor:
     def refresh_coins(self, executor: 'TradeExecutor'):
         """거래소에서 최신 코인 목록을 가져와 업데이트합니다."""
         try:
-            updated_coins = fetch_exchange_coins(executor.exchange_id)
+            updated_coins = fetch_exchange_coins(executor.exchange)
             self.coins = updated_coins
             self._update_max_coin_len()
             logging.info(f"EntityExtractor: 코인 목록이 거래소에서 성공적으로 업데이트되었습니다. 총 {len(self.coins)}개 코인.")
@@ -280,41 +275,18 @@ class TradeExecutor:
     참고: 이 클래스는 실제 거래소 API와 연동하는 로직이 들어갈 위치의 예시입니다.
     """
 
-    def __init__(self, exchange_id: str, config: Dict[str, Any], use_testnet: bool = False):
-        self.exchange_id = exchange_id
+    def __init__(self, exchange: Exchange, config: Dict[str, Any]):
+        self.exchange = exchange
         self.config = config
         self.quote_currency = self._get_quote_currency()
-        self.exchange = self._initialize_exchange(use_testnet)
-
-    def _initialize_exchange(self, use_testnet: bool) -> Exchange:
-        """거래소 ID와 설정에 따라 ccxt 거래소 인스턴스를 생성하고 초기화합니다."""
-        #exchange_id_for_ccxt = self.exchange_id.replace('_testnet', '')
-        #is_testnet = self.exchange_id.endswith('_testnet')
-
-        try:
-            # exchange_class = getattr(ccxt, exchange_id_for_ccxt)
-            exchange_class = getattr(ccxt, self.exchange_id)
-            exchange = exchange_class(self.config.get('ccxt', {}))
-            exchange.timeout = 30000  # 30초
-
-            if use_testnet:
-                exchange.set_sandbox_mode(True)
-                logging.info(f"Initialized {self.exchange_id.capitalize()} in testnet mode.")
-            else:
-                logging.info(f"Initialized {self.exchange_id.capitalize()} in mainnet mode.")
-
-            return exchange
-        except Exception as e:
-            logging.error(f"Failed to initialize exchange {self.exchange_id}: {e}")
-            raise
 
     def _get_quote_currency(self) -> str:
         """설정에서 현재 거래소의 기본 통화를 가져옵니다."""
         try:
-            return self.config['exchange_settings'][self.exchange_id]['quote_currency']
+            return self.config['exchange_settings'][self.exchange.id]['quote_currency']
         except KeyError:
             logging.warning(
-                f"'{self.exchange_id}'에 대한 'quote_currency' 설정이 없습니다. "
+                f"'{self.exchange.id}'에 대한 'quote_currency' 설정이 없습니다. "
                 f"기본값으로 'USDT'를 사용합니다."
             )
             return "USDT"
@@ -390,28 +362,51 @@ def load_secrets(secrets_path: Path) -> Dict[str, Any]:
         logging.error(f"비밀 설정 파일의 형식이 올바르지 않습니다: {secrets_path}")
         raise
 
+def initialize_exchange(exchange_id: str, config: Dict[str, Any], use_testnet: bool = False) -> Exchange:
+    """거래소 ID와 설정에 따라 ccxt 거래소 인스턴스를 생성하고 초기화합니다."""
+    exchange_id_for_ccxt = exchange_id.replace('_testnet', '')
+    is_testnet = exchange_id.endswith('_testnet') or use_testnet
 
-def fetch_exchange_coins(exchange_id: str, use_testnet: bool = False) -> List[str]:
+    try:
+        exchange_class = getattr(ccxt, exchange_id_for_ccxt)
+        
+        # API 키 설정을 config에서 가져옵니다.
+        exchange_config = config.get('exchanges', {}).get(exchange_id, {})
+        api_key = exchange_config.get('api_key')
+        secret_key = exchange_config.get('secret_key')
+
+        exchange_params = {
+            'timeout': 30000,
+        }
+        if api_key and secret_key:
+            exchange_params['apiKey'] = api_key
+            exchange_params['secret'] = secret_key
+
+        exchange = exchange_class(exchange_params)
+
+        if is_testnet:
+            exchange.set_sandbox_mode(True)
+            logging.info(f"Initialized {exchange_id_for_ccxt.capitalize()} in testnet mode.")
+        else:
+            logging.info(f"Initialized {exchange_id_for_ccxt.capitalize()} in mainnet mode.")
+
+        return exchange
+    except Exception as e:
+        logging.error(f"Failed to initialize exchange {exchange_id}: {e}")
+        raise
+
+
+def fetch_exchange_coins(exchange: Exchange) -> List[str]:
     """ccxt를 사용하여 지정된 거래소의 모든 코인 목록을 가져옵니다."""
     try:
-        logging.info(f"Fetching coin list from {exchange_id.capitalize()}...")
-        exchange_class = getattr(ccxt, exchange_id)
-        exchange = exchange_class()
-        exchange.timeout = 30000
-
-        if use_testnet:
-            exchange.set_sandbox_mode(True)
-            logging.info(f"Fetching coins from {exchange_id.capitalize()} in testnet mode.")
-        else:
-            logging.info(f"Fetching coins from {exchange_id.capitalize()} in mainnet mode.")
-
+        logging.info(f"Fetching coin list from {exchange.id.capitalize()}...")
         markets = exchange.load_markets()
         base_coins = [market['base'] for market in markets.values()]
         unique_base_coins = sorted(list(set(base_coins)))
-        logging.info(f"Successfully fetched {len(unique_base_coins)} unique coins from {exchange_id.capitalize()}.")
+        logging.info(f"Successfully fetched {len(unique_base_coins)} unique coins from {exchange.id.capitalize()}.")
         return unique_base_coins
     except Exception as e:
-        logging.error(f"Failed to fetch coin list from {exchange_id.capitalize()}: {e}")
+        logging.error(f"Failed to fetch coin list from {exchange.id.capitalize()}: {e}")
         raise
 
 
@@ -424,15 +419,18 @@ def main():
     config.update(secrets)
 
     default_exchange_id = config.get("default_exchange", "binance")
+    use_testnet = default_exchange_id.endswith('_testnet')
+
     try:
-        exchange_coins = fetch_exchange_coins(default_exchange_id)
+        exchange = initialize_exchange(default_exchange_id, config, use_testnet)
+        exchange_coins = fetch_exchange_coins(exchange)
         config["coins"] = exchange_coins
     except Exception:
         logging.error(f"Could not start the bot because the coin list could not be fetched from {default_exchange_id.capitalize()}.")
         return
 
-    portfolio_manager = PortfolioManager(default_exchange_id, config)
-    executor = TradeExecutor(default_exchange_id, config)
+    portfolio_manager = PortfolioManager(exchange)
+    executor = TradeExecutor(exchange, config)
     extractor = EntityExtractor(config)
     parser = TradeCommandParser(extractor, portfolio_manager, executor)
 
