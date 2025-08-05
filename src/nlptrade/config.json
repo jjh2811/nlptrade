@@ -23,7 +23,6 @@
     "구매": "buy",
     "판매": "sell"
   },
-  "fuzzy_threshold": 80,
   "custom_mapping": {
     "비트코인": "BTC",
     "이더리움": "ETH",

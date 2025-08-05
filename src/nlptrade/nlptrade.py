@@ -8,13 +8,8 @@ import unicodedata
 
 import ccxt
 from ccxt.base.types import Int, Num, OrderBook, Ticker
-from mecab import MeCab
-from rapidfuzz import fuzz
 
 from .portfolio import PortfolioManager
-
-# MeCab 객체 초기화
-mecab = MeCab()
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -50,7 +45,6 @@ class EntityExtractor:
     def __init__(self, config: Dict[str, Any]):
         self.coins: List[str] = config.get("coins", [])
         self.intent_map: Dict[str, str] = config.get("intent_map", {})
-        self.fuzzy_threshold: int = config.get("fuzzy_threshold", 80)
         self.custom_mapping: Dict[str, str] = config.get("custom_mapping", {})
 
     def refresh_coins(self, executor: 'TradeExecutor'):
@@ -75,7 +69,7 @@ class EntityExtractor:
         if input_symbol in self.custom_mapping:
             logging.info(f"Custom mapping found: {input_symbol} -> {self.custom_mapping[input_symbol]}")
             return self.custom_mapping[input_symbol]
-        
+
         return None
 
     def _extract_intent(self, text: str) -> Optional[str]:
@@ -83,9 +77,9 @@ class EntityExtractor:
         # MeCab이 '사줘' -> ['사', '줘']로 분리하여 기존 로직에서 매칭이 어려운 문제 해결
         # 간단한 명령어에서는 키워드 검색이 더 안정적임
         for keyword, intent in self.intent_map.items():
-           if keyword in text:
-               logging.info(f"Intent matched: '{keyword}' in text -> '{intent}'")
-               return intent
+            if keyword in text:
+                logging.info(f"Intent matched: '{keyword}' in text -> '{intent}'")
+                return intent
 
         return None
 
@@ -108,19 +102,6 @@ class EntityExtractor:
             if coin_name in text:
                 # custom_mapping에 있는 키는 find_closest_symbol에서 바로 찾아줌
                 return self.find_closest_symbol(coin_name)
-
-        # 3. 등록되지 않은 한글 이름의 경우, MeCab으로 명사를 추출하여 fuzzy matching 시도
-        tokens = mecab.pos(text)
-        logging.debug(f"Tokens: {tokens}")
-        for token, pos in tokens:
-            # 고유명사(NNP) 또는 일반명사(NNG)를 코인 이름 후보로 간주
-            if pos.startswith('NN'):  # NNP, NNG 등 명사류
-                # 일반적인 거래 단위 등은 제외
-                if token in ['개', '달러', '시장가', '지정가']:
-                    continue
-                found_coin = self.find_closest_symbol(token) # 퍼지 매칭 말고 완전 일치하는 코인 심볼을 찾도록 변경
-                if found_coin:
-                    return found_coin
         return None
 
     def _extract_amount(self, text: str) -> Optional[float]:
