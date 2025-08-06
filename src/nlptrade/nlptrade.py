@@ -391,6 +391,7 @@ def load_secrets(secrets_path: Path) -> Dict[str, Any]:
         logging.error(f"비밀 설정 파일의 형식이 올바르지 않습니다: {secrets_path}")
         raise
 
+
 def initialize_exchange(exchange_id: str, config: Dict[str, Any], use_testnet: bool = False) -> Exchange:
     """거래소 ID와 설정에 따라 ccxt 거래소 인스턴스를 생성하고 초기화합니다."""
     exchange_id_for_ccxt = exchange_id.replace('_testnet', '')

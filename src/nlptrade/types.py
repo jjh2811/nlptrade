@@ -1,5 +1,6 @@
 from typing import Optional, Protocol
-from ccxt.base.types import Balances, Ticker, Int, OrderBook
+
+from ccxt.base.types import Balances, Int, OrderBook, Ticker
 
 
 class Exchange(Protocol):
@@ -10,11 +11,10 @@ class Exchange(Protocol):
     def fetch_order_book(self, symbol: str, limit: Int = None, params={}) -> OrderBook: ...
     def set_sandbox_mode(self, enabled: bool) -> None: ...
     def load_markets(self) -> dict: ...
-    
+
     @property
     def name(self) -> str: ...
     @property
     def id(self) -> str: ...
     @property
     def timeout(self) -> Optional[int]: ...
-

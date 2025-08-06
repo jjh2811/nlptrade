@@ -1,7 +1,6 @@
 import json
 import logging
 from pathlib import Path
-from re import I
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -13,11 +12,7 @@ from telegram.ext import (
     filters,
 )
 
-from nlptrade.nlptrade import (
-    setup_trader,
-    load_config,
-    load_secrets,
-)
+from nlptrade.nlptrade import load_config, load_secrets, setup_trader
 
 # 로깅 설정
 logging.basicConfig(
