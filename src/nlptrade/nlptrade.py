@@ -55,6 +55,7 @@ class EntityExtractor:
     def refresh_coins(self, executor: 'TradeExecutor'):
         """거래소에서 최신 코인 목록을 가져와 업데이트합니다."""
         try:
+            executor.exchange.load_markets(reload=True)
             updated_coins = fetch_exchange_coins(executor.exchange)
             self.coins = updated_coins
             self._update_max_coin_len()
