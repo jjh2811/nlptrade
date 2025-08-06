@@ -8,27 +8,24 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "python-mecab-ko (>=1.3.7,<2.0.0)",
-    "rapidfuzz (>=3.13.0,<4.0.0)",
     "ccxt (>=4.4.98,<5.0.0)",
-    "python-telegram-bot (>=21.4,<22.0.0)"
+    "python-telegram-bot (>=21.4,<22.0.0)",
 ]
 
-[tool.poetry]
-packages = [{include = "nlptrade", from = "src"}]
-
-[tool.poetry.scripts]
+[project.scripts]
 nlptrade-cli = "nlptrade.nlptrade:main"
 nlptrade-bot = "nlptrade.bot:main"
-
-[tool.poetry.group.dev.dependencies]
-pytest = "^8.4.1"
-autopep8 = "^2.3.2"
-pytest-mock = "^3.14.1"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+[dependency-groups]
+dev = [
+    "autopep8>=2.3.2",
+    "pytest>=8.4.1",
+    "pytest-mock>=3.14.1",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
