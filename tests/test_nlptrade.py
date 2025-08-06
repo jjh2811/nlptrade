@@ -76,6 +76,10 @@ def parser(extractor, portfolio_manager, executor):
 
     # 현재가 지정가 주문 테스트
     ("비트코인 현재가에 10개 매수", TradeCommand(intent='buy', coin='BTC', amount=10.0, price=49999.0, order_type='limit')),
+
+    # 상대 가격 지정가 주문 테스트
+    ("BTC 1개를 +10%에 매도", TradeCommand(intent='sell', coin='BTC', amount=1.0, price=55000.00000000001, order_type='limit')),
+    ("BTC 1개를 -10%에 매수", TradeCommand(intent='buy', coin='BTC', amount=1.0, price=44999.1, order_type='limit')),
 ])
 def test_parse_success(parser, input_text, expected_command):
     """다양한 성공 케이스에 대해 파싱이 정상적으로 동작하는지 테스트합니다."""

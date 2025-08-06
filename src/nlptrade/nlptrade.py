@@ -116,7 +116,8 @@ class EntityExtractor:
         """텍스트에서 지정가 가격을 추출 (e.g., '1000원에', '50달러에', '50usdt에', '100에')"""
         if '현재가에' in text:
             return None
-        price_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:원|달러|usdt)?에', text, re.IGNORECASE)
+        # 상대 가격 지정가와 겹치지 않도록 앞에 [+-]가 없는 숫자만 매칭
+        price_match = re.search(r'(?<![+-])\b(\d+(?:\.\d+)?)\s*(?:원|달러|usdt)?에', text, re.IGNORECASE)
         if price_match:
             return float(price_match.group(1))
         return None
@@ -137,6 +138,15 @@ class EntityExtractor:
         """'현재가에' 키워드가 있는지 확인"""
         return '현재가에' in text
 
+    def _extract_relative_price(self, text: str) -> Optional[float]:
+        """텍스트에서 '+10%', '-5.5에'와 같은 상대적 가격을 추출합니다."""
+        # 정규식: (+ 또는 -)(숫자)(%는 선택) + '에'
+        price_match = re.search(r'([+-]\d+(?:\.\d+)?)\s*(%|퍼센트)?\s*에', text)
+        if price_match:
+            # 그룹 1: 부호와 숫자 (e.g., '-10')
+            return float(price_match.group(1))
+        return None
+
     def _extract_relative_amount(self, text: str) -> Optional[Dict[str, Any]]:
         """텍스트에서 '전부', '절반', '20%' 같은 상대적 수량을 추출"""
         if '전부' in text or '전량' in text:
@@ -144,7 +154,8 @@ class EntityExtractor:
         if '절반' in text or '반' in text:
             return {'type': 'percentage', 'value': 50.0}
 
-        percentage_match = re.search(r'(\d+\.?\d*)\s*(%|퍼센트)', text)
+        # [+-] 부호가 앞에 없는 퍼센티지만 매칭 (상대 가격과 구분하기 위함)
+        percentage_match = re.search(r'(?<![+-])(\d+\.?\d*)\s*(%|퍼센트)(?!에)', text)
         if percentage_match:
             return {'type': 'percentage', 'value': float(percentage_match.group(1))}
         return None
@@ -159,6 +170,7 @@ class EntityExtractor:
             "coin": self._extract_coin(clean_input),
             "amount": self._extract_amount(clean_input),
             "price": self._extract_price(clean_input),
+            "relative_price": self._extract_relative_price(clean_input),
             "relative_amount": self._extract_relative_amount(clean_input),
             "total_cost": self._extract_total_cost(clean_input),
             "current_price_order": self._extract_current_price_order(clean_input),
@@ -168,9 +180,8 @@ class EntityExtractor:
         if entities["amount"] is not None:
             entities["relative_amount"] = None
 
-        if entities["price"] is not None or entities["current_price_order"]:
+        if entities["price"] is not None or entities["current_price_order"] or entities["relative_price"] is not None:
             entities["order_type"] = "limit"
-
         return entities
 
 
@@ -197,6 +208,24 @@ class TradeCommandParser:
                     logging.warning(f"코인 목록 새로고침 후에도 코인 정보를 찾을 수 없습니다: '{text}'.")
                     return None
             else:
+                return None
+
+        if entities.get("relative_price") is not None:
+            coin_symbol = str(entities["coin"])
+            intent = str(entities["intent"])
+            relative_price_percentage = entities["relative_price"]
+            order_book = self.executor.get_order_book(coin_symbol)
+
+            if order_book:
+                base_price = order_book['bid'] if intent == 'buy' else order_book['ask']
+                # 퍼센트 기반 가격 계산
+                calculated_price = base_price * (1 + relative_price_percentage / 100.0)
+                entities['price'] = calculated_price
+                logging.info(
+                    f"상대 가격 주문: {coin_symbol}의 기준가({base_price}) 대비 {relative_price_percentage:+}% -> 지정가 {calculated_price} 설정"
+                )
+            else:
+                logging.error(f"'{coin_symbol}'의 호가를 가져올 수 없어 상대 가격 주문을 처리할 수 없습니다.")
                 return None
 
         if entities.get("current_price_order"):
