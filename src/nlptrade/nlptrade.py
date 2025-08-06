@@ -3,11 +3,11 @@ import json
 import logging
 from pathlib import Path
 import re
-from typing import Any, Dict, List, Optional, Protocol, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import unicodedata
 
 import ccxt
-from ccxt.base.types import Int, Num, OrderBook, Ticker
+from ccxt.base.types import Num
 
 from .portfolio import PortfolioManager
 from .types import Exchange
@@ -398,7 +398,7 @@ def initialize_exchange(exchange_id: str, config: Dict[str, Any], use_testnet: b
 
     try:
         exchange_class = getattr(ccxt, exchange_id_for_ccxt)
-        
+
         # API 키 설정을 config에서 가져옵니다.
         exchange_config = config.get('exchanges', {}).get(exchange_id, {})
         api_key = exchange_config.get('api_key')
