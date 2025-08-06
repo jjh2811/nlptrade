@@ -20,7 +20,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 @dataclass
 class TradeCommand:
     intent: str  # "buy" or "sell"
-    coin: Optional[str]  # e.g., "BTC", "ETH" (영문 심볼로 통일), "전체 매도"의 경우 None
+    symbol: Optional[str]  # e.g., "BTC/USDT", "ETH/USDT"
     amount: Optional[float]  # 거래 수량
     price: Optional[float]  # 지정가 가격 (시장가의 경우 None)
     order_type: str  # "market" or "limit"
@@ -416,9 +416,11 @@ class TradeCommandParser:
             logging.warning(f"계산된 거래 수량이 0 이하({final_amount})이므로 거래를 진행할 수 없습니다.")
             return None
 
+        market_symbol = f"{coin_symbol}/{self.executor.quote_currency}" if coin_symbol else None
+
         return TradeCommand(
             intent=str(entities["intent"]),
-            coin=coin_symbol,
+            symbol=market_symbol,
             amount=final_amount,
             price=entities.get("price"),
             order_type=str(entities["order_type"]),
@@ -480,6 +482,14 @@ class TradeExecutor:
     def execute(self, command: TradeCommand) -> Dict:
         """주어진 명령을 실행하고 결과를 JSON 호환 딕셔너리로 반환합니다."""
         logging.info(f"Executing command: {command}")
+
+        if not command.symbol:
+            logging.error("거래를 실행하려면 symbol이 반드시 필요합니다.")
+            return {"status": "error", "message": "Symbol is missing"}
+
+        # 여기에 실제 거래 로직을 추가할 수 있습니다.
+        # 예: exchange.create_order(command.symbol, command.order_type, command.intent, command.amount, command.price)
+
         result = {
             "status": "success",
             "command_executed": command.__dict__
