@@ -283,31 +283,12 @@ class TradeCommandParser:
         """주어진 텍스트를 파싱하여 TradeCommand 객체로 변환합니다."""
         entities = self.extractor.extract_entities(text)
 
-        is_sell_all_portfolio = (
-            entities.get("intent") == "sell"
-            and (entities.get("relative_amount") or {}).get("value") == 100.0
-            and entities.get("coin") is None
-        )
-
-        if not is_sell_all_portfolio and (not entities.get("intent") or not entities.get("coin")):
+        if not entities.get("intent") or not entities.get("coin"):
             logging.warning(
                 f"Parse failed for text: '{text}'. "
                 f"Missing intent ('{entities.get('intent')}') or coin ('{entities.get('coin')}')."
             )
-            if not entities.get("coin"):
-                logging.info("코인 정보를 찾을 수 없습니다. 거래소에서 코인 목록을 새로고침합니다.")
-                self.extractor.refresh_coins(self.executor)
-                entities = self.extractor.extract_entities(text)
-                is_sell_all_portfolio = (
-                    entities.get("intent") == "sell"
-                    and (entities.get("relative_amount") or {}).get("value") == 100.0
-                    and entities.get("coin") is None
-                )
-                if not entities.get("coin") and not is_sell_all_portfolio:
-                    logging.warning(f"코인 목록 새로고침 후에도 코인 정보를 찾을 수 없습니다: '{text}'.")
-                    return None
-            else:
-                return None
+            return None
         
         coin_symbol = str(entities["coin"]) if entities.get("coin") else None
 
@@ -398,19 +379,19 @@ class TradeCommandParser:
 
         relative_amount_info = entities.get("relative_amount")
         if relative_amount_info:
-            if not coin_symbol: # 'market sell all'
-                 final_amount = None
-            else:
-                current_holding = self.portfolio_manager.get_coin_amount(coin_symbol)
-                if current_holding is None or current_holding <= 0:
-                    logging.warning(f"상대 수량을 처리할 수 없습니다. '{coin_symbol}'의 보유량이 없거나 잔고 조회에 실패했습니다.")
-                    return None
+            if not coin_symbol:
+                logging.error("상대 수량 주문은 반드시 코인이 명시되어야 합니다.")
+                return None
+            current_holding = self.portfolio_manager.get_coin_amount(coin_symbol)
+            if current_holding is None or current_holding <= 0:
+                logging.warning(f"상대 수량을 처리할 수 없습니다. '{coin_symbol}'의 보유량이 없거나 잔고 조회에 실패했습니다.")
+                return None
 
-                percentage = relative_amount_info.get('value')
-                if percentage is not None:
-                    calculated_amount = current_holding * (percentage / 100.0)
-                    final_amount = calculated_amount
-                    logging.info(f"계산된 수량: {percentage}% of {current_holding} {coin_symbol} -> {final_amount} {coin_symbol}")
+            percentage = relative_amount_info.get('value')
+            if percentage is not None:
+                calculated_amount = current_holding * (percentage / 100.0)
+                final_amount = calculated_amount
+                logging.info(f"계산된 수량: {percentage}% of {current_holding} {coin_symbol} -> {final_amount} {coin_symbol}")
 
         if final_amount is not None and final_amount <= 0:
             logging.warning(f"계산된 거래 수량이 0 이하({final_amount})이므로 거래를 진행할 수 없습니다.")

@@ -69,7 +69,6 @@ def parser(config, mock_portfolio_manager, mock_trade_executor):
     ("market buy btc with 10 usdt", TradeCommand(intent='buy', order_type='market', symbol='BTC/USDT', amount=10 / 50025, price=None, total_cost=10.0)),
     ("market sell 0.01 btc", TradeCommand(intent='sell', order_type='market', symbol='BTC/USDT', amount=0.01, price=None, total_cost=None)),
     ("market sell all eth", TradeCommand(intent='sell', order_type='market', symbol='ETH/USDT', amount=None, price=None, total_cost=None)),
-    ("market sell all", TradeCommand(intent='sell', order_type='market', symbol=None, amount=None, price=None, total_cost=None)),
     ("market buy xrp with 1000 krw", TradeCommand(intent='buy', order_type='market', symbol='XRP/USDT', amount=1000 / 50025, price=None, total_cost=1000.0)),
     ("limit sell 20% btc +4%", TradeCommand(intent='sell', order_type='limit', symbol='BTC/USDT', amount=None, price=52052.0, total_cost=None)),  # 50050 * (1 + 0.04)
     ("limit buy 50 doge -7%", TradeCommand(intent='buy', order_type='limit', symbol='DOGE/USDT', amount=50.0, price=46500.0, total_cost=None)),  # 50000 * (1 - 0.07)
