@@ -603,19 +603,37 @@ def main():
     config.update(secrets)
 
     default_exchange_id = config.get("default_exchange", "binance")
+    available_exchanges = list(config.get("exchange_settings", {}).keys())
 
     try:
         parser, executor, _ = setup_trader(default_exchange_id, config)
+        current_exchange_id = default_exchange_id
     except Exception as e:
         logging.error(f"거래기 초기화 실패: {e}")
         return
 
-    print("--- NLP Trade-bot 시작 ---" + " (종료하려면 'exit' 또는 'quit' 입력)")
+    print(f"--- NLP Trade-bot 시작 (현재 거래소: {current_exchange_id}) ---" + " (종료하려면 'exit' 또는 'quit' 입력)")
+    print(f"사용 가능한 거래소: {available_exchanges}")
+    print("거래소 변경: /exchange [거래소 이름]")
+
     while True:
         try:
-            text = input("\n[명령어 입력]> ")
+            text = input(f"\n[{current_exchange_id}]> ")
             if text.lower() in ['exit', 'quit']:
                 break
+
+            if text.lower().startswith("/exchange "):
+                new_exchange_id = text.split(" ")[1].strip()
+                if new_exchange_id in available_exchanges:
+                    try:
+                        parser, executor, _ = setup_trader(new_exchange_id, config)
+                        current_exchange_id = new_exchange_id
+                        print(f"거래소가 {current_exchange_id}(으)로 변경되었습니다.")
+                    except Exception as e:
+                        logging.error(f"{new_exchange_id}로 거래소 전환 실패: {e}")
+                else:
+                    print(f"지원하지 않는 거래소입니다: {new_exchange_id}. 사용 가능한 거래소: {available_exchanges}")
+                continue
 
             command = parser.parse(text)
             if command:
