@@ -62,7 +62,7 @@ def parser(extractor, portfolio_manager, executor):
     ("비트코인 10개 사줘", TradeCommand(intent='buy', symbol='BTC/USDT', amount=10.0, price=None, order_type='market', total_cost=None)),
     ("이더 3개 4000달러에 매도해줘", TradeCommand(intent='sell', symbol='ETH/USDT', amount=3.0, price=4000.0, order_type='limit', total_cost=None)),
     ("리플 100개 시장가 매수", TradeCommand(intent='buy', symbol='XRP/USDT', amount=100.0, price=None, order_type='market', total_cost=None)),
-    ("XRP 50개 구매", TradeCommand(intent='buy', symbol='XRP/USDT', amount=50.0, price=None, order_type='market', total_cost=None)),
+    ("50 XRP 현재가에 구매", TradeCommand(intent='buy', symbol='XRP/USDT', amount=50.0, price=49999.0, order_type='limit', total_cost=None)),
     ("도지코인 10000개 팔아", TradeCommand(intent='sell', symbol='DOGE/USDT', amount=10000.0, price=None, order_type='market', total_cost=None)),
 
     # 커스텀 매핑 및 오타 교정 케이스

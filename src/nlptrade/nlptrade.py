@@ -105,12 +105,13 @@ class EntityExtractor:
 
     def _extract_coin(self, text: str, is_english: bool) -> Optional[str]:
         """텍스트에서 코인 심볼 또는 한글 이름(별칭)을 추출"""
-        # 영문/한글 공통: 영문 심볼 패턴 추출
+        # 영문/한글 공통: 영문 심볼 패턴으로 모든 잠재적 후보 추출
         symbol_pattern = rf'\b[A-Z0-9]{{2,{self.max_coin_len}}}(?![A-Z0-9])'
-        symbol_match = re.search(symbol_pattern, text.upper())
-        if symbol_match:
-            input_symbol = symbol_match.group(0)
-            found_coin = self.find_closest_symbol(input_symbol)
+        potential_symbols = re.findall(symbol_pattern, text.upper())
+        
+        # 찾은 후보들 중에서 유효한 코인이 있는지 확인
+        for symbol in potential_symbols:
+            found_coin = self.find_closest_symbol(symbol)
             if found_coin:
                 return found_coin
 
@@ -119,7 +120,9 @@ class EntityExtractor:
             sorted_custom_keys = sorted(self.custom_mapping.keys(), key=len, reverse=True)
             for coin_name in sorted_custom_keys:
                 if coin_name in text:
-                    return self.find_closest_symbol(coin_name)
+                    found_coin = self.find_closest_symbol(coin_name)
+                    if found_coin:
+                        return found_coin
         
         return None
 
@@ -327,7 +330,7 @@ class EntityExtractor:
             entities["current_price_order"] or 
             entities["relative_price"] is not None):
             entities["order_type"] = "limit"
-        print(entities)
+        
         return entities
 
 
