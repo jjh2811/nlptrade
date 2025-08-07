@@ -180,10 +180,18 @@ class EntityExtractor:
         return None
 
     def _extract_current_price_order(self, text: str, is_english: bool) -> bool:
-        """'현재가에' 키워드가 있는지 확인"""
+        """'현재가에' 키워드가 있는지 또는 암시적 현재가 주문인지 확인"""
         if is_english:
-            return False  # 영문에서는 지원하지 않음
+            # 영문: 'limit' 주문이면서 명시적인 가격 지정이 없는 경우 True를 반환.
+            # Parser에서 최종적으로 price 존재 여부를 확인하여 처리함.
+            if text.lower().startswith('limit'):
+                # 상대 가격 지정(e.g. +5%)이 있으면 명시적 가격이 있는 것임
+                if re.search(r'[+-]\d+(?:\.\d+)?', text):
+                    return False
+                return True
+            return False
         else:
+            # '현재가에' 없는 문장도 현재가 주문하려했으나 시장가 주문하고 겹침
             return '현재가에' in text
 
     def _extract_relative_price(self, text: str, is_english: bool) -> Optional[float]:
@@ -247,7 +255,7 @@ class EntityExtractor:
         # 이미 추출된 패턴들 제거 (상대 가격 패턴도 제거)
         patterns_to_remove = [
             r'with\s*\d+(?:\.\d*)?\s*(?:usdt|krw)?',  # with X usdt/krw
-            r'[+-]\d+(?:\.\d*)?\s*%'  # +5%, -10% 등
+            r'[+-]\d+(?:\.\d*)?\s*%?'  # +5%, -10 등
         ]
         
         for pattern in patterns_to_remove:
@@ -359,28 +367,7 @@ class TradeCommandParser:
         
         coin_symbol = str(entities["coin"]) if entities.get("coin") else None
 
-        # Handle English limit orders with implicit current price (e.g., "limit buy btc with 50 usdt")
-        if (self.extractor._is_english(text) and
-                entities.get("order_type") == "limit" and
-                entities.get("price") is None and
-                entities.get("relative_price") is None and # Make sure it's not a relative price order
-                (entities.get("total_cost") is not None or entities.get("relative_amount") is not None)):
-            
-            if not coin_symbol:
-                logging.error("Implicit current price limit order requires a coin symbol.")
-                return None
-
-            logging.info(f"Limit order with implicit current price detected for {coin_symbol}.")
-            order_book = self.executor.get_order_book(coin_symbol)
-
-            if order_book:
-                price_to_set = order_book['bid']  # Consistent with Korean '현재가' logic
-                entities['price'] = price_to_set
-                logging.info(f"Implicit current price: Set limit price to {price_to_set} for {coin_symbol}")
-            else:
-                logging.error(f"Could not fetch order book for '{coin_symbol}' to set implicit limit price.")
-                return None
-
+        # 상대 가격 주문을 먼저 처리
         if entities.get("relative_price") is not None:
             if not coin_symbol:
                 logging.error("상대 가격 주문은 반드시 코인이 명시되어야 합니다.")
@@ -401,19 +388,22 @@ class TradeCommandParser:
                 logging.error(f"'{coin_symbol}'의 호가를 가져올 수 없어 상대 가격 주문을 처리할 수 없습니다.")
                 return None
 
-        if entities.get("current_price_order"): # This is for Korean commands only
+        # 암시적 현재가 주문 처리 (한글 '현재가에' 또는 조건부 영어 limit 주문)
+        elif entities.get("current_price_order") and entities.get("price") is None:
             if not coin_symbol:
-                logging.error("'현재가' 주문은 반드시 코인이 명시되어야 합니다.")
+                logging.error("현재가 주문은 반드시 코인이 명시되어야 합니다.")
                 return None
 
-            intent = str(entities["intent"])
+            logging.info(f"암시적 현재가 주문 감지: {coin_symbol}")
             order_book = self.executor.get_order_book(coin_symbol)
 
             if order_book:
-                entities['price'] = order_book['bid']
-                logging.info(f"현재가 주문: {coin_symbol}의 1호 매수호가({order_book['bid']})로 지정가 설정")
+                # 매수는 매수 호가(bid), 매도는 매도 호가(ask)를 사용하는 것이 일반적
+                price_to_set = order_book['bid'] if entities.get("intent") == 'buy' else order_book['ask']
+                entities['price'] = price_to_set
+                logging.info(f"암시적 현재가 설정: 지정가를 {price_to_set}(으)로 설정")
             else:
-                logging.error(f"'{coin_symbol}'의 호가를 가져올 수 없어 '현재가에' 주문을 처리할 수 없습니다.")
+                logging.error(f"'{coin_symbol}'의 호가를 가져올 수 없어 현재가 주문을 처리할 수 없습니다.")
                 return None
 
         if entities.get("amount") is None and entities.get("relative_amount") is None and entities.get("total_cost") is None:
