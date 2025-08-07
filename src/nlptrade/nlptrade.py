@@ -333,6 +333,12 @@ class TradeCommandParser:
         """주어진 텍스트를 파싱하여 TradeCommand 객체로 변환합니다."""
         entities = self.extractor.extract_entities(text)
 
+        # 코인을 찾지 못했을 경우, 코인 목록을 갱신하고 다시 시도
+        if not entities.get("coin"):
+            logging.warning(f"코인을 찾지 못했습니다: '{text}'. 코인 목록을 갱신하고 다시 시도합니다.")
+            self.extractor.refresh_coins(self.executor)
+            entities = self.extractor.extract_entities(text)
+
         if not entities.get("intent") or not entities.get("coin"):
             logging.warning(
                 f"Parse failed for text: '{text}'. "
