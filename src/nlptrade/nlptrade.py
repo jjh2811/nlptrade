@@ -86,17 +86,26 @@ class EntityExtractor:
         has_korean = any('가' <= char <= '힣' for char in text)
         return not has_korean and any(text.lower().startswith(keyword) for keyword in english_keywords)
 
-    # --- Korean-specific extraction methods ---
-    def _extract_intent_korean(self, text: str) -> Optional[str]:
+    def _extract_intent(self, text: str, is_english: bool) -> Optional[str]:
         """텍스트에서 거래 의도(매수/매도)를 추출"""
-        for keyword, intent in self.intent_map.items():
-            if keyword in text:
-                logging.info(f"Intent matched: '{keyword}' in text -> '{intent}'")
+        if is_english:
+            # 영문: 정규식으로 buy/sell 추출
+            match = re.search(r'\b(buy|sell)\b', text.lower())
+            if match:
+                intent = match.group(1)
+                logging.info(f"Intent matched (English): '{intent}'")
                 return intent
+        else:
+            # 한글: intent_map 기반 키워드 매칭
+            for keyword, intent in self.intent_map.items():
+                if keyword in text:
+                    logging.info(f"Intent matched (Korean): '{keyword}' -> '{intent}'")
+                    return intent
         return None
 
-    def _extract_coin_korean(self, text: str) -> Optional[str]:
+    def _extract_coin(self, text: str, is_english: bool) -> Optional[str]:
         """텍스트에서 코인 심볼 또는 한글 이름(별칭)을 추출"""
+        # 영문/한글 공통: 영문 심볼 패턴 추출
         symbol_pattern = rf'\b[A-Z0-9]{{2,{self.max_coin_len}}}(?![A-Z0-9])'
         symbol_match = re.search(symbol_pattern, text.upper())
         if symbol_match:
@@ -105,172 +114,213 @@ class EntityExtractor:
             if found_coin:
                 return found_coin
 
-        sorted_custom_keys = sorted(self.custom_mapping.keys(), key=len, reverse=True)
-        for coin_name in sorted_custom_keys:
-            if coin_name in text:
-                return self.find_closest_symbol(coin_name)
+        if not is_english:
+            # 한글: 커스텀 매핑(별칭) 검색
+            sorted_custom_keys = sorted(self.custom_mapping.keys(), key=len, reverse=True)
+            for coin_name in sorted_custom_keys:
+                if coin_name in text:
+                    return self.find_closest_symbol(coin_name)
+        
         return None
 
-    def _extract_amount_korean(self, text: str) -> Optional[float]:
+    def _extract_amount(self, text: str, is_english: bool) -> Optional[float]:
         """텍스트에서 거래 수량을 추출"""
-        amount_match = re.search(r'(\d+(?:\.\d+)?)\s*개', text)
-        if amount_match:
-            return float(amount_match.group(1))
+        if is_english:
+            # 영문: 숫자만 추출 (나중에 tokens에서 처리)
+            return None  # 영문은 토큰 기반 처리에서 담당
+        else:
+            # 한글: "개" 단위로 수량 추출
+            amount_match = re.search(r'(\d+(?:\.\d+)?)\s*개', text)
+            if amount_match:
+                return float(amount_match.group(1))
         return None
 
-    def _extract_price_korean(self, text: str) -> Optional[float]:
-        """텍스트에서 지정가 가격을 추출 (e.g., '1000원에', '50달러에', '50usdt에', '100에')"""
-        if '현재가에' in text:
-            return None
-        price_match = re.search(r'(?<![+-])\b(\d+(?:\.\d+)?)\s*(?:원|달러|usdt)?에', text, re.IGNORECASE)
-        if price_match:
-            return float(price_match.group(1))
+    def _extract_price(self, text: str, is_english: bool) -> Optional[float]:
+        """텍스트에서 지정가 가격을 추출"""
+        if is_english:
+            # 영문: 숫자만 추출 (나중에 tokens에서 처리)
+            return None  # 영문은 토큰 기반 처리에서 담당
+        else:
+            # 한글: "원에", "달러에", "usdt에" 패턴으로 가격 추출
+            if '현재가에' in text:
+                return None
+            price_match = re.search(r'(?<![+-])\b(\d+(?:\.\d+)?)\s*(?:원|달러|usdt)?에', text, re.IGNORECASE)
+            if price_match:
+                return float(price_match.group(1))
         return None
 
-    def _extract_total_cost_korean(self, text: str) -> Optional[float]:
-        """텍스트에서 '얼마어치' 또는 '얼마' 같은 총 비용을 추출"""
-        cost_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:원|달러|usdt)어치', text, re.IGNORECASE)
-        if cost_match:
-            return float(cost_match.group(1))
+    def _extract_total_cost(self, text: str, is_english: bool) -> Optional[float]:
+        """텍스트에서 총 비용을 추출"""
+        if is_english:
+            # 영문: "with X usdt" 패턴으로 추출
+            cost_match = re.search(r'with\s*(\d+(?:\.\d+)?)\s*(?:usdt|krw)?', text.lower())
+            if cost_match:
+                return float(cost_match.group(1))
+        else:
+            # 한글: "어치" 또는 통화 단위로 추출
+            cost_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:원|달러|usdt)어치', text, re.IGNORECASE)
+            if cost_match:
+                return float(cost_match.group(1))
 
-        cost_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:원|달러|usdt)(?!\s*에)', text, re.IGNORECASE)
-        if cost_match:
-            return float(cost_match.group(1))
-
+            cost_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:원|달러|usdt)(?!\s*에)', text, re.IGNORECASE)
+            if cost_match:
+                return float(cost_match.group(1))
+        
         return None
 
-    def _extract_current_price_order_korean(self, text: str) -> bool:
+    def _extract_current_price_order(self, text: str, is_english: bool) -> bool:
         """'현재가에' 키워드가 있는지 확인"""
-        return '현재가에' in text
+        if is_english:
+            return False  # 영문에서는 지원하지 않음
+        else:
+            return '현재가에' in text
 
-    def _extract_relative_price_korean(self, text: str) -> Optional[float]:
-        """텍스트에서 '+10%', '-5.5에'와 같은 상대적 가격을 추출합니다."""
-        price_match = re.search(r'([+-]\d+(?:\.\d+)?)\s*(%|퍼센트)?\s*에', text)
-        if price_match:
-            return float(price_match.group(1))
+    def _extract_relative_price(self, text: str, is_english: bool) -> Optional[float]:
+        """텍스트에서 상대적 가격을 추출"""
+        if is_english:
+            # 영문: "+10%", "-5%" 패턴 (% 기호가 반드시 있어야 함)
+            price_match = re.search(r'([+-]\d+(?:\.\d+)?)\s*%?', text)
+            if price_match:
+                return float(price_match.group(1))
+        else:
+            # 한글: "+10%에", "-5.5에" 패턴
+            price_match = re.search(r'([+-]\d+(?:\.\d+)?)\s*(%|퍼센트)?\s*에', text)
+            if price_match:
+                return float(price_match.group(1))
+        
         return None
 
-    def _extract_relative_amount_korean(self, text: str) -> Optional[Dict[str, Any]]:
-        """텍스트에서 '전부', '절반', '20%' 같은 상대적 수량을 추출"""
-        if '전부' in text or '전량' in text:
-            return {'type': 'percentage', 'value': 100.0}
-        if '절반' in text or '반' in text:
-            return {'type': 'percentage', 'value': 50.0}
+    def _extract_relative_amount(self, text: str, is_english: bool) -> Optional[Dict[str, Any]]:
+        """텍스트에서 상대적 수량을 추출"""
+        if is_english:
+            # 영문: "all", "50%" 패턴
+            if 'all' in text.lower():
+                return {'type': 'percentage', 'value': 100.0}
+            
+            percentage_match = re.search(r'![+-](\d+(?:\.\d+)?)\s*%', text)
+            if percentage_match:
+                return {'type': 'percentage', 'value': float(percentage_match.group(1))}
+        else:
+            # 한글: "전부", "절반", "20%" 패턴
+            if '전부' in text or '전량' in text:
+                return {'type': 'percentage', 'value': 100.0}
+            if '절반' in text or '반' in text:
+                return {'type': 'percentage', 'value': 50.0}
 
-        percentage_match = re.search(r'(?<![+-])(\d+\.?\d*)\s*(%|퍼센트)(?!에)', text)
-        if percentage_match:
-            return {'type': 'percentage', 'value': float(percentage_match.group(1))}
+            percentage_match = re.search(r'(?<![+-])(\d+\.?\d*)\s*(%|퍼센트)(?!에)', text)
+            if percentage_match:
+                return {'type': 'percentage', 'value': float(percentage_match.group(1))}
+        
         return None
 
-    def _extract_entities_korean(self, text: str) -> Dict[str, Any]:
-        """주어진 텍스트(한국어)에서 거래 관련 모든 엔터티를 추출"""
-        entities: Dict[str, Any] = {
-            "intent": self._extract_intent_korean(text),
-            "coin": self._extract_coin_korean(text),
-            "amount": self._extract_amount_korean(text),
-            "price": self._extract_price_korean(text),
-            "relative_price": self._extract_relative_price_korean(text),
-            "relative_amount": self._extract_relative_amount_korean(text),
-            "total_cost": self._extract_total_cost_korean(text),
-            "current_price_order": self._extract_current_price_order_korean(text),
-            "order_type": "market"
-        }
+    def _extract_order_type(self, text: str, is_english: bool) -> str:
+        """주문 타입을 추출"""
+        if is_english:
+            # 영문: "market" 또는 "limit" 명시적 추출
+            match = re.search(r'^(market|limit)', text.lower())
+            if match:
+                return match.group(1)
+        
+        # 기본값은 market (한글은 가격 조건에 따라 나중에 변경)
+        return "market"
 
-        if entities["amount"] is not None:
-            entities["relative_amount"] = None
+    def _process_english_tokens(self, text: str, entities: Dict[str, Any]) -> None:
+        """영문 명령어의 토큰 기반 처리"""
+        # order_type과 intent 제거 후 나머지 토큰 추출
+        match = re.match(r'^(market|limit)?\s*(buy|sell)\s*', text.lower())
+        if match:
+            rest_of_text = text[match.end():]
+        else:
+            rest_of_text = text
 
-        if entities["price"] is not None or entities["current_price_order"] or entities["relative_price"] is not None:
-            entities["order_type"] = "limit"
-        return entities
+        # 이미 추출된 패턴들 제거 (상대 가격 패턴도 제거)
+        patterns_to_remove = [
+            r'with\s*\d+(?:\.\d*)?\s*(?:usdt|krw)?',  # with X usdt/krw
+            r'[+-]\d+(?:\.\d*)?\s*%'  # +5%, -10% 등
+        ]
+        
+        for pattern in patterns_to_remove:
+            rest_of_text = re.sub(pattern, '', rest_of_text, flags=re.IGNORECASE)
 
-    def _extract_entities_english(self, text: str) -> Dict[str, Any]:
-        """주어진 텍스트(영어)에서 거래 관련 모든 엔터티를 추출"""
-        text = text.lower()
-        entities: Dict[str, Any] = {
-            "intent": None, "coin": None, "amount": None, "price": None,
-            "relative_price": None, "relative_amount": None, "total_cost": None,
-            "order_type": "market", "currency_for_cost": None,
-        }
-
-        # 1. 거래 유형(order_type)과 행동(action) 추출
-        match = re.match(r'^(market|limit)?\s*(buy|sell)\s*', text)
-        if not match:
-            logging.warning(f"English command does not start with a valid order type/action: '{text}'")
-            return entities
-
-        order_type, intent = match.groups()
-        if order_type:
-            entities['order_type'] = order_type
-        entities['intent'] = intent
-        rest_of_text = text[match.end():]
-
-        # 2. 비용 기반 수량 추출 ("with 10 usdt")
-        value_match = re.search(r'with\s*(\d+\.?\d*)\s*(usdt|krw)?', rest_of_text)
-        if value_match:
-            entities['total_cost'] = float(value_match.group(1))
-            entities['currency_for_cost'] = value_match.group(2).upper() if value_match.group(2) else self.quote_currency
-            rest_of_text = rest_of_text.replace(value_match.group(0), '', 1)
-
-        # 3. 상대 가격 추출 ("+5%", "-10%")
-        rel_price_match = re.search(r'([+-]\d+\.?\d*)\s*%?', rest_of_text)
-        if rel_price_match:
-            entities['relative_price'] = float(rel_price_match.group(1))
-            entities['order_type'] = 'limit'
-            rest_of_text = rest_of_text.replace(rel_price_match.group(0), '', 1)
-
-        # 4. 나머지 토큰에서 코인, 수량, 가격 추출
+        # 토큰 분석
         tokens = [t for t in rest_of_text.split() if t]
         numbers = []
         potential_coins = []
 
         for token in tokens:
-            if token == 'all':
-                entities['relative_amount'] = {'type': 'percentage', 'value': 100.0}
-            elif '%' in token:
+            if token.lower() == 'all':
+                if not entities.get('relative_amount'):
+                    entities['relative_amount'] = {'type': 'percentage', 'value': 100.0}
+            elif '%' in token and not re.match(r'^[+-]', token):
+                # +나 -로 시작하지 않는 %만 상대 수량으로 처리
                 try:
                     value = float(token.replace('%', ''))
-                    entities['relative_amount'] = {'type': 'percentage', 'value': value}
+                    if not entities.get('relative_amount'):
+                        entities['relative_amount'] = {'type': 'percentage', 'value': value}
                 except ValueError:
-                    potential_coins.append(token) # Not a valid percentage number
+                    potential_coins.append(token)
             elif re.match(r'^\d+\.?\d*$', token):
                 numbers.append(float(token))
             else:
                 potential_coins.append(token)
 
-        # 5. 코인 심볼 확정
-        # Find the last valid coin in the command
-        found_coin = None
-        for pc in potential_coins:
-            coin = self.find_closest_symbol(pc.upper())
-            if coin:
-                found_coin = coin
-        entities['coin'] = found_coin
+        # 코인 심볼 확정 (마지막 유효한 코인 사용)
+        if not entities.get('coin'):
+            for pc in potential_coins:
+                coin = self.find_closest_symbol(pc.upper())
+                if coin:
+                    entities['coin'] = coin
 
-
-        # 6. 숫자들을 수량과 가격에 할당
-        has_amount_spec = entities['total_cost'] is not None or entities['relative_amount'] is not None
+        # 숫자를 수량과 가격에 할당
+        has_amount_spec = entities.get('total_cost') is not None or entities.get('relative_amount') is not None
         if numbers:
-            if not has_amount_spec:
+            if not has_amount_spec and not entities.get('amount'):
                 entities['amount'] = numbers.pop(0)
-            if numbers:
+            if numbers and not entities.get('price'):
                 entities['price'] = numbers.pop(0)
-        
-        if entities['price'] is not None:
-            entities['order_type'] = 'limit'
-
-        return entities
 
     def extract_entities(self, text: str) -> Dict[str, Any]:
-        """주어진 텍스트에서 거래 관련 모든 엔터티를 추출"""
+        """주어진 텍스트에서 거래 관련 모든 엔터티를 통합 추출"""
         clean_input = clean_text(text)
         logging.info(f"Original text: '{text}', Cleaned text: '{clean_input}'")
 
-        if self._is_english(clean_input):
-            logging.info("English command detected.")
-            return self._extract_entities_english(clean_input)
-        else:
-            logging.info("Korean command detected.")
-            return self._extract_entities_korean(clean_input)
+        # 언어 구분
+        is_english = self._is_english(clean_input)
+        lang_type = "English" if is_english else "Korean"
+        logging.info(f"{lang_type} command detected.")
+
+        # 기본 엔터티 구조 초기화
+        entities: Dict[str, Any] = {
+            "intent": None, "coin": None, "amount": None, "price": None,
+            "relative_price": None, "relative_amount": None, "total_cost": None,
+            "current_price_order": False, "order_type": "market"
+        }
+
+        # 각 엔터티 추출 (언어별 로직 적용)
+        entities["intent"] = self._extract_intent(clean_input, is_english)
+        entities["coin"] = self._extract_coin(clean_input, is_english)
+        entities["amount"] = self._extract_amount(clean_input, is_english)
+        entities["price"] = self._extract_price(clean_input, is_english)
+        entities["total_cost"] = self._extract_total_cost(clean_input, is_english)
+        entities["current_price_order"] = self._extract_current_price_order(clean_input, is_english)
+        entities["relative_price"] = self._extract_relative_price(clean_input, is_english)
+        entities["relative_amount"] = self._extract_relative_amount(clean_input, is_english)
+        entities["order_type"] = self._extract_order_type(clean_input, is_english)
+
+        # 영문의 경우 토큰 기반 추가 처리
+        if is_english:
+            self._process_english_tokens(clean_input, entities)
+
+        # 후처리: 조건부 로직 적용
+        if entities["amount"] is not None:
+            entities["relative_amount"] = None
+
+        if (entities["price"] is not None or 
+            entities["current_price_order"] or 
+            entities["relative_price"] is not None):
+            entities["order_type"] = "limit"
+        print(entities)
+        return entities
 
 
 class TradeCommandParser:
