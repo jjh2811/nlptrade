@@ -1,4 +1,5 @@
 import logging
+from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, Optional
 
 from .types import Exchange
@@ -20,26 +21,27 @@ class PortfolioManager:
         self.exchange = exchange
         self.balance = self._fetch_balance()
 
-    def _parse_and_validate_amount(self, coin: str, amount: Any) -> Optional[float]:
+    def _parse_and_validate_amount(self, coin: str, amount: Any) -> Optional[Decimal]:
         """
-        다양한 타입의 amount 값을 float으로 변환하고 유효성을 검사합니다.
+        다양한 타입의 amount 값을 Decimal으로 변환하고 유효성을 검사합니다.
         0보다 큰 경우에만 유효한 값으로 간주합니다.
         """
         try:
-            amount_float = float(amount)
-        except (ValueError, TypeError):
+            # str으로 먼저 변환하여 부동소수점 부정확성을 방지합니다.
+            amount_decimal = Decimal(str(amount))
+        except (InvalidOperation, TypeError, ValueError):
             if amount:
                 logging.debug(
-                    f"Could not convert balance for '{coin}' to float. "
+                    f"Could not convert balance for '{coin}' to Decimal. "
                     f"Value was: '{amount}' (type: {type(amount)}). Skipping."
                 )
             return None
 
-        if amount_float > 0:
-            return amount_float
+        if amount_decimal > Decimal("0"):
+            return amount_decimal
         return None
 
-    def _fetch_balance(self) -> Dict[str, float]:
+    def _fetch_balance(self) -> Dict[str, str]:
         """선택된 거래소에서 사용 가능한 잔고를 가져와 캐시합니다."""
         if not self.exchange:
             return {}
@@ -49,7 +51,7 @@ class PortfolioManager:
             free_balances = balance_data.get('free', {})
             logging.info(f"Successfully fetched account balance from {self.exchange.name}.")
             return {
-                coin: valid_amount
+                coin: str(valid_amount)
                 for coin, amount in free_balances.items()
                 if (valid_amount := self._parse_and_validate_amount(coin, amount)) is not None
             }
@@ -57,6 +59,16 @@ class PortfolioManager:
             logging.error(f"Failed to fetch balance from {self.exchange.name}: {e}")
             return {}
 
-    def get_coin_amount(self, coin_symbol: str) -> Optional[float]:
+    def get_coin_amount(self, coin_symbol: str) -> Optional[Decimal]:
         """캐시된 잔고에서 특정 코인의 사용 가능한 수량을 반환합니다."""
-        return self.balance.get(coin_symbol)
+        amount_str = self.balance.get(coin_symbol)
+        if amount_str is None:
+            return None
+        try:
+            return Decimal(amount_str)
+        except InvalidOperation:
+            logging.warning(
+                f"Could not convert cached balance for '{coin_symbol}' to Decimal. "
+                f"Value was: '{amount_str}'. Returning None."
+            )
+            return None

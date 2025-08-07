@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 from typing import Any, Dict, List, Optional, Tuple
 import unicodedata
+from decimal import Decimal, InvalidOperation
 
 import ccxt
 from ccxt.base.types import Num
@@ -22,10 +23,10 @@ class TradeCommand:
     """사용자 입력에서 파생된 구조화된 거래 명령을 나타냅니다."""
     intent: str  # "buy" or "sell"
     symbol: Optional[str]  # e.g., "BTC/USDT", "ETH/USDT"
-    amount: Optional[float]  # 거래 수량
-    price: Optional[float]  # 지정가 가격 (시장가의 경우 None)
+    amount: Optional[Decimal]  # 거래 수량
+    price: Optional[Decimal]  # 지정가 가격 (시장가의 경우 None)
     order_type: str  # "market" or "limit"
-    total_cost: Optional[float] = None  # 총 주문 비용
+    total_cost: Optional[Decimal] = None  # 총 주문 비용
 
 
 def clean_text(text: str) -> str:
@@ -131,91 +132,98 @@ class EntityExtractor:
         
         return None
 
-    def _extract_amount(self, text: str, is_english: bool) -> Optional[float]:
+    def _extract_amount(self, text: str, is_english: bool) -> Optional[Decimal]:
         """텍스트에서 거래 수량을 추출"""
-        if is_english:
-            # 영문: 숫자만 추출 (나중에 tokens에서 처리)
-            return None  # 영문은 토큰 기반 처리에서 담당
-        else:
-            # 한글: "개" 단위로 수량 추출
-            amount_match = re.search(r'(\d+(?:\.\d+)?)\s*개', text)
-            if amount_match:
-                return float(amount_match.group(1))
+        try:
+            if is_english:
+                # 영문: 숫자만 추출 (나중에 tokens에서 처리)
+                return None  # 영문은 토큰 기반 처리에서 담당
+            else:
+                # 한글: "개" 단위로 수량 추출
+                amount_match = re.search(r'(\d+(?:\.\d+)?)\s*개', text)
+                if amount_match:
+                    return Decimal(amount_match.group(1))
 
-            # 한글: "숫자 코인이름" 패턴으로 수량 추출
-            if self.coins:
-                coin_pattern = '|'.join(re.escape(coin) for coin in self.coins)
-                pattern = rf'(\d+(?:\.\d+)?)\s*({coin_pattern})\b'
-                amount_coin_match = re.search(pattern, text, re.IGNORECASE)
-                if amount_coin_match:
-                    return float(amount_coin_match.group(1))
+                # 한글: "숫자 코인이름" 패턴으로 수량 추출
+                if self.coins:
+                    coin_pattern = '|'.join(re.escape(coin) for coin in self.coins)
+                    pattern = rf'(\d+(?:\.\d+)?)\s*({coin_pattern})\b'
+                    amount_coin_match = re.search(pattern, text, re.IGNORECASE)
+                    if amount_coin_match:
+                        return Decimal(amount_coin_match.group(1))
+        except InvalidOperation:
+            return None
         return None
 
-    def _extract_price(self, text: str, is_english: bool) -> Optional[float]:
+    def _extract_price(self, text: str, is_english: bool) -> Optional[Decimal]:
         """텍스트에서 지정가 가격을 추출"""
-        if is_english:
-            # 영문: 숫자만 추출 (나중에 tokens에서 처리)
-            return None  # 영문은 토큰 기반 처리에서 담당
-        else:
-            # 한글:
-            # 상대 가격 패턴(+/- 숫자)이 있으면 일반(지정가) 가격으로 해석하지 않음
-            if re.search(r'[+-]\d', text):
-                return None
+        try:
+            if is_english:
+                # 영문: 숫자만 추출 (나중에 tokens에서 처리)
+                return None  # 영문은 토큰 기반 처리에서 담당
+            else:
+                # 한글:
+                # 상대 가격 패턴(+/- 숫자)이 있으면 일반(지정가) 가격으로 해석하지 않음
+                if re.search(r'[+-]\d', text):
+                    return None
 
-            # "원에", "달러에", "usdt에" 패턴으로 가격 추출
-            if '현재가' in text:
-                return None
-            
-            # 패턴 1: "10000에" 같이 '에'로 끝나는 명시적인 지정가
-            price_match = re.search(r'(?<![+-])\b(\d+(?:\.\d+)?)\s*(?:원|달러|usdt)?에', text, re.IGNORECASE)
-            if price_match:
-                return float(price_match.group(1))
+                # "원에", "달러에", "usdt에" 패턴으로 가격 추출
+                if '현재가' in text:
+                    return None
+                
+                # 패턴 1: "10000에" 같이 '에'로 끝나는 명시적인 지정가
+                price_match = re.search(r'(?<![+-])\b(\d+(?:\.\d+)?)\s*(?:원|달러|usdt)?에', text, re.IGNORECASE)
+                if price_match:
+                    return Decimal(price_match.group(1))
 
-            # 패턴 2: '에'가 없는 경우. 수량, 총액, 퍼센트와 관련된 숫자를 제외하고 찾는다.
-            # 퍼센트와 관련된 숫자는 가격이 될 수 없다.
-            if re.search(r'\d+\s*(?:%|퍼센트)', text):
-                return None
+                # 패턴 2: '에'가 없는 경우. 수량, 총액, 퍼센트와 관련된 숫자를 제외하고 찾는다.
+                # 퍼센트와 관련된 숫자는 가격이 될 수 없다.
+                if re.search(r'\d+\s*(?:%|퍼센트)', text):
+                    return None
 
-            masked_text = text
-            
-            # 총액 패턴 마스킹 ("10000원어치")
-            masked_text = re.sub(r'\b\d+(?:\.\d+)?\s*(?:원|달러|usdt)\s*어치\b', ' MASKED_COST ', masked_text, re.IGNORECASE)
+                masked_text = text
+                
+                # 총액 패턴 마스킹 ("10000원어치")
+                masked_text = re.sub(r'\b\d+(?:\.\d+)?\s*(?:원|달러|usdt)\s*어치\b', ' MASKED_COST ', masked_text, re.IGNORECASE)
 
-            # 수량 패턴 마스킹
-            # "0.2개"
-            masked_text = re.sub(r'\b\d+(?:\.\d+)?\s*개\b', ' MASKED_AMOUNT ', masked_text)
-            
-            # "0.2 BTC"
-            if self.coins:
-                sorted_coins = sorted(self.coins, key=len, reverse=True)
-                coin_pattern = '|'.join(re.escape(coin) for coin in sorted_coins)
-                masked_text = re.sub(rf'\b\d+(?:\.\d+)?\s*({coin_pattern})\b', ' MASKED_AMOUNT ', masked_text, flags=re.IGNORECASE)
+                # 수량 패턴 마스킹
+                # "0.2개"
+                masked_text = re.sub(r'\b\d+(?:\.\d+)?\s*개\b', ' MASKED_AMOUNT ', masked_text)
+                
+                # "0.2 BTC"
+                if self.coins:
+                    sorted_coins = sorted(self.coins, key=len, reverse=True)
+                    coin_pattern = '|'.join(re.escape(coin) for coin in sorted_coins)
+                    masked_text = re.sub(rf'\b\d+(?:\.\d+)?\s*({coin_pattern})\b', ' MASKED_AMOUNT ', masked_text, flags=re.IGNORECASE)
 
-            # 마스킹된 텍스트에 남아있는 숫자 중 마지막 숫자를 가격으로 간주
-            remaining_numbers = re.findall(r'(?<![+-])\b(\d+(?:\.\d+)?)\b', masked_text)
-            
-            if remaining_numbers:
-                return float(remaining_numbers[-1])
-
+                # 마스킹된 텍스트에 남아있는 숫자 중 마지막 숫자를 가격으로 간주
+                remaining_numbers = re.findall(r'(?<![+-])\b(\d+(?:\.\d+)?)\b', masked_text)
+                
+                if remaining_numbers:
+                    return Decimal(remaining_numbers[-1])
+        except InvalidOperation:
+            return None
         return None
 
-    def _extract_total_cost(self, text: str, is_english: bool) -> Optional[float]:
+    def _extract_total_cost(self, text: str, is_english: bool) -> Optional[Decimal]:
         """텍스트에서 총 비용을 추출"""
-        if is_english:
-            # 영문: "with X usdt" 패턴으로 추출
-            cost_match = re.search(r'with\s*(\d+(?:\.\d+)?)\s*(?:usdt|krw)?', text.lower())
-            if cost_match:
-                return float(cost_match.group(1))
-        else:
-            # 한글: "어치" 또는 통화 단위로 추출
-            cost_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:원|달러|usdt)어치', text, re.IGNORECASE)
-            if cost_match:
-                return float(cost_match.group(1))
+        try:
+            if is_english:
+                # 영문: "with X usdt" 패턴으로 추출
+                cost_match = re.search(r'with\s*(\d+(?:\.\d+)?)\s*(?:usdt|krw)?', text.lower())
+                if cost_match:
+                    return Decimal(cost_match.group(1))
+            else:
+                # 한글: "어치" 또는 통화 단위로 추출
+                cost_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:원|달러|usdt)어치', text, re.IGNORECASE)
+                if cost_match:
+                    return Decimal(cost_match.group(1))
 
-            cost_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:원|달러|usdt)(?!\s*에)', text, re.IGNORECASE)
-            if cost_match:
-                return float(cost_match.group(1))
-        
+                cost_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:원|달러|usdt)(?!\s*에)', text, re.IGNORECASE)
+                if cost_match:
+                    return Decimal(cost_match.group(1))
+        except InvalidOperation:
+            return None
         return None
 
     def _extract_current_price_order(self, text: str, is_english: bool) -> bool:
@@ -233,42 +241,46 @@ class EntityExtractor:
             # '현재가' 없는 문장도 현재가 주문하려했으나 시장가 주문하고 겹침
             return '현재가' in text
 
-    def _extract_relative_price(self, text: str, is_english: bool) -> Optional[float]:
+    def _extract_relative_price(self, text: str, is_english: bool) -> Optional[Decimal]:
         """텍스트에서 상대적 가격을 추출"""
-        if is_english:
-            # 영문: "+10%", "-5%" 패턴 (% 기호가 반드시 있어야 함)
-            price_match = re.search(r'([+-]\d+(?:\.\d+)?)\s*%?', text)
-            if price_match:
-                return float(price_match.group(1))
-        else:
-            # 한글: "+10%에", "-5.5에" 패턴
-            price_match = re.search(r'([+-]\d+(?:\.\d+)?)\s*(%|퍼센트)?\s*에?', text)
-            if price_match:
-                return float(price_match.group(1))
-        
+        try:
+            if is_english:
+                # 영문: "+10%", "-5%" 패턴 (% 기호가 반드시 있어야 함)
+                price_match = re.search(r'([+-]\d+(?:\.\d+)?)\s*%?', text)
+                if price_match:
+                    return Decimal(price_match.group(1))
+            else:
+                # 한글: "+10%에", "-5.5에" 패턴
+                price_match = re.search(r'([+-]\d+(?:\.\d+)?)\s*(%|퍼센트)?\s*에?', text)
+                if price_match:
+                    return Decimal(price_match.group(1))
+        except InvalidOperation:
+            return None
         return None
 
     def _extract_relative_amount(self, text: str, is_english: bool) -> Optional[Dict[str, Any]]:
         """텍스트에서 상대적 수량을 추출"""
-        if is_english:
-            # 영문: "all", "50%" 패턴
-            if 'all' in text.lower():
-                return {'type': 'percentage', 'value': 100.0}
-            
-            percentage_match = re.search(r'![+-](\d+(?:\.\d+)?)\s*%', text)
-            if percentage_match:
-                return {'type': 'percentage', 'value': float(percentage_match.group(1))}
-        else:
-            # 한글: "전부", "절반", "20%" 패턴
-            if '전부' in text or '전량' in text:
-                return {'type': 'percentage', 'value': 100.0}
-            if '절반' in text or '반' in text:
-                return {'type': 'percentage', 'value': 50.0}
+        try:
+            if is_english:
+                # 영문: "all", "50%" 패턴
+                if 'all' in text.lower():
+                    return {'type': 'percentage', 'value': Decimal('100.0')}
+                
+                percentage_match = re.search(r'![+-](\d+(?:\.\d+)?)\s*%', text)
+                if percentage_match:
+                    return {'type': 'percentage', 'value': Decimal(percentage_match.group(1))}
+            else:
+                # 한글: "전부", "절반", "20%" 패턴
+                if '전부' in text or '전량' in text:
+                    return {'type': 'percentage', 'value': Decimal('100.0')}
+                if '절반' in text or '반' in text:
+                    return {'type': 'percentage', 'value': Decimal('50.0')}
 
-            percentage_match = re.search(r'(?<![+-])(\d+\.?\d*)\s*(%|퍼센트)(?!에)', text)
-            if percentage_match:
-                return {'type': 'percentage', 'value': float(percentage_match.group(1))}
-        
+                percentage_match = re.search(r'(?<![+-])(\d+\.?\d*)\s*(%|퍼센트)(?!에)', text)
+                if percentage_match:
+                    return {'type': 'percentage', 'value': Decimal(percentage_match.group(1))}
+        except InvalidOperation:
+            return None
         return None
 
     def _extract_order_type(self, text: str, is_english: bool) -> str:
@@ -306,21 +318,22 @@ class EntityExtractor:
         potential_coins = []
 
         for token in tokens:
-            if token.lower() == 'all':
-                if not entities.get('relative_amount'):
-                    entities['relative_amount'] = {'type': 'percentage', 'value': 100.0}
-            elif '%' in token and not re.match(r'^[+-]', token):
-                # +나 -로 시작하지 않는 %만 상대 수량으로 처리
-                try:
-                    value = float(token.replace('%', ''))
+            try:
+                if token.lower() == 'all':
+                    if not entities.get('relative_amount'):
+                        entities['relative_amount'] = {'type': 'percentage', 'value': Decimal('100.0')}
+                elif '%' in token and not re.match(r'^[+-]', token):
+                    # +나 -로 시작하지 않는 %만 상대 수량으로 처리
+                    value = Decimal(token.replace('%', ''))
                     if not entities.get('relative_amount'):
                         entities['relative_amount'] = {'type': 'percentage', 'value': value}
-                except ValueError:
+                elif re.match(r'^\d+\.?\d*$', token):
+                    numbers.append(Decimal(token))
+                else:
                     potential_coins.append(token)
-            elif re.match(r'^\d+\.?\d*$', token):
-                numbers.append(float(token))
-            else:
+            except (InvalidOperation, ValueError):
                 potential_coins.append(token)
+
 
         # 코인 심볼 확정 (마지막 유효한 코인 사용)
         if not entities.get('coin'):
@@ -421,8 +434,9 @@ class TradeCommandParser:
             order_book = self.executor.get_order_book(coin_symbol)
 
             if order_book:
-                base_price = order_book['bid'] if intent == 'buy' else order_book['ask']
-                calculated_price = base_price * (1 + relative_price_percentage / 100.0)
+                base_price_num = order_book['bid'] if intent == 'buy' else order_book['ask']
+                base_price = Decimal(str(base_price_num))
+                calculated_price = base_price * (Decimal('1') + relative_price_percentage / Decimal('100'))
                 entities['price'] = calculated_price
                 logging.info(
                     f"상대 가격 주문: {coin_symbol}의 기준가({base_price}) 대비 {relative_price_percentage:+}% -> 지정가 {calculated_price} 설정"
@@ -442,7 +456,8 @@ class TradeCommandParser:
 
             if order_book:
                 # 매수는 매수 호가(bid), 매도는 매도 호가(ask)를 사용하는 것이 일반적
-                price_to_set = order_book['bid'] if entities.get("intent") == 'buy' else order_book['ask']
+                price_to_set_num = order_book['bid'] if entities.get("intent") == 'buy' else order_book['ask']
+                price_to_set = Decimal(str(price_to_set_num))
                 entities['price'] = price_to_set
                 logging.info(f"암시적 현재가 설정: 지정가를 {price_to_set}(으)로 설정")
             else:
@@ -467,9 +482,12 @@ class TradeCommandParser:
 
             if price_to_use is None:
                 # For market orders, get current price. For limit orders, price should have been set.
-                price_to_use = self.executor.get_current_price(coin_symbol)
+                price_num = self.executor.get_current_price(coin_symbol)
+                if price_num:
+                    price_to_use = Decimal(str(price_num))
 
-            if price_to_use is not None and float(price_to_use) > 0:
+
+            if price_to_use is not None and price_to_use > Decimal('0'):
                 final_amount = total_cost / price_to_use
                 quote_currency = self.executor._get_quote_currency()
                 logging.info(f"계산된 수량: {total_cost} {quote_currency} / {price_to_use} {quote_currency}/coin -> {final_amount} {coin_symbol}")
@@ -483,17 +501,17 @@ class TradeCommandParser:
                 logging.error("상대 수량 주문은 반드시 코인이 명시되어야 합니다.")
                 return None
             current_holding = self.portfolio_manager.get_coin_amount(coin_symbol)
-            if current_holding is None or current_holding <= 0:
+            if current_holding is None or current_holding <= Decimal('0'):
                 logging.warning(f"상대 수량을 처리할 수 없습니다. '{coin_symbol}'의 보유량이 없거나 잔고 조회에 실패했습니다.")
                 return None
 
             percentage = relative_amount_info.get('value')
             if percentage is not None:
-                calculated_amount = current_holding * (percentage / 100.0)
+                calculated_amount = current_holding * (percentage / Decimal('100'))
                 final_amount = calculated_amount
                 logging.info(f"계산된 수량: {percentage}% of {current_holding} {coin_symbol} -> {final_amount} {coin_symbol}")
 
-        if final_amount is not None and final_amount <= 0:
+        if final_amount is not None and final_amount <= Decimal('0'):
             logging.warning(f"계산된 거래 수량이 0 이하({final_amount})이므로 거래를 진행할 수 없습니다.")
             return None
 
@@ -571,10 +589,16 @@ class TradeExecutor:
 
         # 여기에 실제 거래 로직을 추가할 수 있습니다.
         # 예: exchange.create_order(command.symbol, command.order_type, command.intent, command.amount, command.price)
+        
+        # JSON 직렬화를 위해 Decimal을 str으로 변환
+        command_dict = command.__dict__
+        for key, value in command_dict.items():
+            if isinstance(value, Decimal):
+                command_dict[key] = str(value)
 
         result = {
             "status": "success",
-            "command_executed": command.__dict__
+            "command_executed": command_dict
         }
         return result
 
