@@ -214,7 +214,7 @@ class EntityExtractor:
         return None
 
     def _extract_current_price_order(self, text: str, is_english: bool) -> bool:
-        """'현재가에' 키워드가 있는지 또는 암시적 현재가 주문인지 확인"""
+        """'현재가' 키워드가 있는지 또는 암시적 현재가 주문인지 확인"""
         if is_english:
             # 영문: 'limit' 주문이면서 명시적인 가격 지정이 없는 경우 True를 반환.
             # Parser에서 최종적으로 price 존재 여부를 확인하여 처리함.
@@ -225,7 +225,7 @@ class EntityExtractor:
                 return True
             return False
         else:
-            # '현재가에' 없는 문장도 현재가 주문하려했으나 시장가 주문하고 겹침
+            # '현재가' 없는 문장도 현재가 주문하려했으나 시장가 주문하고 겹침
             return '현재가' in text
 
     def _extract_relative_price(self, text: str, is_english: bool) -> Optional[float]:
@@ -422,7 +422,7 @@ class TradeCommandParser:
                 logging.error(f"'{coin_symbol}'의 호가를 가져올 수 없어 상대 가격 주문을 처리할 수 없습니다.")
                 return None
 
-        # 암시적 현재가 주문 처리 (한글 '현재가에' 또는 조건부 영어 limit 주문)
+        # 암시적 현재가 주문 처리 (한글 '현재가' 또는 조건부 영어 limit 주문)
         elif entities.get("current_price_order") and entities.get("price") is None:
             if not coin_symbol:
                 logging.error("현재가 주문은 반드시 코인이 명시되어야 합니다.")
