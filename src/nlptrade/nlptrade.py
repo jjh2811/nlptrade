@@ -152,12 +152,46 @@ class EntityExtractor:
             # 영문: 숫자만 추출 (나중에 tokens에서 처리)
             return None  # 영문은 토큰 기반 처리에서 담당
         else:
-            # 한글: "원에", "달러에", "usdt에" 패턴으로 가격 추출
+            # 한글:
+            # 상대 가격 패턴(+/- 숫자)이 있으면 일반(지정가) 가격으로 해석하지 않음
+            if re.search(r'[+-]\d', text):
+                return None
+
+            # "원에", "달러에", "usdt에" 패턴으로 가격 추출
             if '현재가에' in text:
                 return None
+            
+            # 패턴 1: "10000에" 같이 '에'로 끝나는 명시적인 지정가
             price_match = re.search(r'(?<![+-])\b(\d+(?:\.\d+)?)\s*(?:원|달러|usdt)?에', text, re.IGNORECASE)
             if price_match:
                 return float(price_match.group(1))
+
+            # 패턴 2: '에'가 없는 경우. 수량, 총액, 퍼센트와 관련된 숫자를 제외하고 찾는다.
+            # 퍼센트와 관련된 숫자는 가격이 될 수 없다.
+            if re.search(r'\d+\s*(?:%|퍼센트)', text):
+                return None
+
+            masked_text = text
+            
+            # 총액 패턴 마스킹 ("10000원어치")
+            masked_text = re.sub(r'\b\d+(?:\.\d+)?\s*(?:원|달러|usdt)\s*어치\b', ' MASKED_COST ', masked_text, re.IGNORECASE)
+
+            # 수량 패턴 마스킹
+            # "0.2개"
+            masked_text = re.sub(r'\b\d+(?:\.\d+)?\s*개\b', ' MASKED_AMOUNT ', masked_text)
+            
+            # "0.2 BTC"
+            if self.coins:
+                sorted_coins = sorted(self.coins, key=len, reverse=True)
+                coin_pattern = '|'.join(re.escape(coin) for coin in sorted_coins)
+                masked_text = re.sub(rf'\b\d+(?:\.\d+)?\s*({coin_pattern})\b', ' MASKED_AMOUNT ', masked_text, flags=re.IGNORECASE)
+
+            # 마스킹된 텍스트에 남아있는 숫자 중 마지막 숫자를 가격으로 간주
+            remaining_numbers = re.findall(r'(?<![+-])\b(\d+(?:\.\d+)?)\b', masked_text)
+            
+            if remaining_numbers:
+                return float(remaining_numbers[-1])
+
         return None
 
     def _extract_total_cost(self, text: str, is_english: bool) -> Optional[float]:
@@ -192,7 +226,7 @@ class EntityExtractor:
             return False
         else:
             # '현재가에' 없는 문장도 현재가 주문하려했으나 시장가 주문하고 겹침
-            return '현재가에' in text
+            return '현재가' in text
 
     def _extract_relative_price(self, text: str, is_english: bool) -> Optional[float]:
         """텍스트에서 상대적 가격을 추출"""
@@ -203,7 +237,7 @@ class EntityExtractor:
                 return float(price_match.group(1))
         else:
             # 한글: "+10%에", "-5.5에" 패턴
-            price_match = re.search(r'([+-]\d+(?:\.\d+)?)\s*(%|퍼센트)?\s*에', text)
+            price_match = re.search(r'([+-]\d+(?:\.\d+)?)\s*(%|퍼센트)?\s*에?', text)
             if price_match:
                 return float(price_match.group(1))
         
