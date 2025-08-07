@@ -133,6 +133,14 @@ class EntityExtractor:
             amount_match = re.search(r'(\d+(?:\.\d+)?)\s*개', text)
             if amount_match:
                 return float(amount_match.group(1))
+
+            # 한글: "숫자 코인이름" 패턴으로 수량 추출
+            if self.coins:
+                coin_pattern = '|'.join(re.escape(coin) for coin in self.coins)
+                pattern = rf'(\d+(?:\.\d+)?)\s*({coin_pattern})\b'
+                amount_coin_match = re.search(pattern, text, re.IGNORECASE)
+                if amount_coin_match:
+                    return float(amount_coin_match.group(1))
         return None
 
     def _extract_price(self, text: str, is_english: bool) -> Optional[float]:
