@@ -19,6 +19,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 @dataclass
 class TradeCommand:
+    """사용자 입력에서 파생된 구조화된 거래 명령을 나타냅니다."""
     intent: str  # "buy" or "sell"
     symbol: Optional[str]  # e.g., "BTC/USDT", "ETH/USDT"
     amount: Optional[float]  # 거래 수량
@@ -37,6 +38,10 @@ def clean_text(text: str) -> str:
 
 
 class EntityExtractor:
+    """
+    자연어 텍스트 명령에서 거래 관련 엔티티(의도, 코인, 수량, 가격 등)를 추출합니다.
+    정규식과 키워드 매칭을 사용하여 사용자 요청의 핵심 구성 요소를 식별합니다.
+    """
     def __init__(self, config: Dict[str, Any]):
         self.coins: List[str] = config.get("coins", [])
         self.intent_map: Dict[str, str] = config.get("intent_map", {})
@@ -377,6 +382,10 @@ class EntityExtractor:
 
 
 class TradeCommandParser:
+    """
+    추출된 엔티티를 파싱하여 최종적이고 검증된 `TradeCommand`를 구성합니다.
+    상대 가격 계산, 총 비용을 수량으로 변환, 최종 주문 유형 결정과 같은 복잡한 로직을 처리합니다.
+    """
     def __init__(self, extractor: EntityExtractor, portfolio_manager: PortfolioManager, executor: 'TradeExecutor'):
         self.extractor = extractor
         self.portfolio_manager = portfolio_manager
@@ -502,8 +511,9 @@ class TradeCommandParser:
 
 class TradeExecutor:
     """
-    TradeCommand를 실행합니다.
-    참고: 이 클래스는 실제 거래소 API와 연동하는 로직이 들어갈 위치의 예시입니다.
+    `TradeCommand`를 거래소에 대해 실행합니다.
+    이 클래스는 `ccxt` 라이브러리와 상호 작용하여 실제 주문을 생성하고,
+    가격을 조회하며, 거래소와의 연결을 관리하는 역할을 담당합니다.
     """
 
     def __init__(self, exchange: Exchange, config: Dict[str, Any]):
