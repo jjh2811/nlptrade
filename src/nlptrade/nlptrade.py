@@ -158,7 +158,7 @@ class EntityExtractor:
                 return None
 
             # "원에", "달러에", "usdt에" 패턴으로 가격 추출
-            if '현재가에' in text:
+            if '현재가' in text:
                 return None
             
             # 패턴 1: "10000에" 같이 '에'로 끝나는 명시적인 지정가
