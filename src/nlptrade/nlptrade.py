@@ -258,29 +258,26 @@ class EntityExtractor:
             return None
         return None
 
-    def _extract_relative_amount(self, text: str, is_english: bool) -> Optional[Dict[str, Any]]:
+    def _extract_relative_amount(self, text: str, is_english: bool) -> Optional[str]:
         """텍스트에서 상대적 수량을 추출"""
-        try:
-            if is_english:
-                # 영문: "all", "50%" 패턴
-                if 'all' in text.lower():
-                    return {'type': 'percentage', 'value': Decimal('100.0')}
-                
-                percentage_match = re.search(r'![+-](\d+(?:\.\d+)?)\s*%', text)
-                if percentage_match:
-                    return {'type': 'percentage', 'value': Decimal(percentage_match.group(1))}
-            else:
-                # 한글: "전부", "절반", "20%" 패턴
-                if '전부' in text or '전량' in text:
-                    return {'type': 'percentage', 'value': Decimal('100.0')}
-                if '절반' in text or '반' in text:
-                    return {'type': 'percentage', 'value': Decimal('50.0')}
+        if is_english:
+            # 영문: "all", "50%" 패턴
+            if 'all' in text.lower():
+                return "100.0"
+            
+            percentage_match = re.search(r'![+-](\d+(?:\.\d+)?)\s*%', text)
+            if percentage_match:
+                return percentage_match.group(1)
+        else:
+            # 한글: "전부", "절반", "20%" 패턴
+            if '전부' in text or '전량' in text:
+                return "100.0"
+            if '절반' in text or '반' in text:
+                return "50.0"
 
-                percentage_match = re.search(r'(?<![+-])(\d+\.?\d*)\s*(%|퍼센트)(?!에)', text)
-                if percentage_match:
-                    return {'type': 'percentage', 'value': Decimal(percentage_match.group(1))}
-        except InvalidOperation:
-            return None
+            percentage_match = re.search(r'(?<![+-])(\d+\.?\d*)\s*(%|퍼센트)(?!에)', text)
+            if percentage_match:
+                return percentage_match.group(1)
         return None
 
     def _extract_order_type(self, text: str, is_english: bool) -> str:
@@ -321,12 +318,12 @@ class EntityExtractor:
             try:
                 if token.lower() == 'all':
                     if not entities.get('relative_amount'):
-                        entities['relative_amount'] = {'type': 'percentage', 'value': Decimal('100.0')}
+                        entities['relative_amount'] = '100.0'
                 elif '%' in token and not re.match(r'^[+-]', token):
                     # +나 -로 시작하지 않는 %만 상대 수량으로 처리
-                    value = Decimal(token.replace('%', ''))
+                    value = token.replace('%', '')
                     if not entities.get('relative_amount'):
-                        entities['relative_amount'] = {'type': 'percentage', 'value': value}
+                        entities['relative_amount'] = value
                 elif re.match(r'^\d+\.?\d*$', token):
                     numbers.append(Decimal(token))
                 else:
@@ -495,8 +492,8 @@ class TradeCommandParser:
                 logging.error(f"'{coin_symbol}'의 현재 가격을 가져올 수 없어 총 비용 기반 주문을 처리할 수 없습니다.")
                 return None
 
-        relative_amount_info = entities.get("relative_amount")
-        if relative_amount_info:
+        relative_amount_str = entities.get("relative_amount")
+        if relative_amount_str:
             if not coin_symbol:
                 logging.error("상대 수량 주문은 반드시 코인이 명시되어야 합니다.")
                 return None
@@ -505,11 +502,14 @@ class TradeCommandParser:
                 logging.warning(f"상대 수량을 처리할 수 없습니다. '{coin_symbol}'의 보유량이 없거나 잔고 조회에 실패했습니다.")
                 return None
 
-            percentage = relative_amount_info.get('value')
-            if percentage is not None:
+            try:
+                percentage = Decimal(relative_amount_str)
                 calculated_amount = current_holding * (percentage / Decimal('100'))
                 final_amount = calculated_amount
                 logging.info(f"계산된 수량: {percentage}% of {current_holding} {coin_symbol} -> {final_amount} {coin_symbol}")
+            except InvalidOperation:
+                logging.error(f"잘못된 상대 수량 값입니다: '{relative_amount_str}'")
+                return None
 
         if final_amount is not None and final_amount <= Decimal('0'):
             logging.warning(f"계산된 거래 수량이 0 이하({final_amount})이므로 거래를 진행할 수 없습니다.")
