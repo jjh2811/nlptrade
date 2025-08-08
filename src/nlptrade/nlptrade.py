@@ -23,10 +23,10 @@ class TradeCommand:
     """사용자 입력에서 파생된 구조화된 거래 명령을 나타냅니다."""
     intent: str  # "buy" or "sell"
     symbol: Optional[str]  # e.g., "BTC/USDT", "ETH/USDT"
-    amount: Optional[Decimal]  # 거래 수량
-    price: Optional[Decimal]  # 지정가 가격 (시장가의 경우 None)
+    amount: Optional[str]  # 거래 수량
+    price: Optional[str]  # 지정가 가격 (시장가의 경우 None)
     order_type: str  # "market" or "limit"
-    total_cost: Optional[Decimal] = None  # 총 주문 비용
+    total_cost: Optional[str] = None  # 총 주문 비용
 
 
 def clean_text(text: str) -> str:
@@ -520,10 +520,10 @@ class TradeCommandParser:
         return TradeCommand(
             intent=str(entities["intent"]),
             symbol=market_symbol,
-            amount=final_amount,
-            price=entities.get("price"),
+            amount=str(final_amount) if final_amount is not None else None,
+            price=str(entities.get("price")) if entities.get("price") is not None else None,
             order_type=str(entities["order_type"]),
-            total_cost=total_cost
+            total_cost=str(total_cost) if total_cost is not None else None
         )
 
 
@@ -590,11 +590,7 @@ class TradeExecutor:
         # 여기에 실제 거래 로직을 추가할 수 있습니다.
         # 예: exchange.create_order(command.symbol, command.order_type, command.intent, command.amount, command.price)
         
-        # JSON 직렬화를 위해 Decimal을 str으로 변환
         command_dict = command.__dict__
-        for key, value in command_dict.items():
-            if isinstance(value, Decimal):
-                command_dict[key] = str(value)
 
         result = {
             "status": "success",
