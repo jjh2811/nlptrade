@@ -497,6 +497,10 @@ class TradeCommandParser:
             if not coin_symbol:
                 logging.error("상대 수량 주문은 반드시 코인이 명시되어야 합니다.")
                 return None
+
+            # 상대 수량 계산 전에 잔고를 새로고침합니다.
+            self.portfolio_manager.refresh_balance()
+            
             current_holding = self.portfolio_manager.get_coin_amount(coin_symbol)
             if current_holding is None or current_holding <= Decimal('0'):
                 logging.warning(f"상대 수량을 처리할 수 없습니다. '{coin_symbol}'의 보유량이 없거나 잔고 조회에 실패했습니다.")

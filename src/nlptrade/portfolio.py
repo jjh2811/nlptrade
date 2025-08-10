@@ -21,6 +21,11 @@ class PortfolioManager:
         self.exchange = exchange
         self.balance = self._fetch_balance()
 
+    def refresh_balance(self):
+        """거래소에서 최신 잔고를 가져와 업데이트합니다."""
+        logging.info("Refreshing portfolio balance...")
+        self.balance = self._fetch_balance()
+
     def _parse_and_validate_amount(self, coin: str, amount: Any) -> Optional[Decimal]:
         """
         다양한 타입의 amount 값을 Decimal으로 변환하고 유효성을 검사합니다.
