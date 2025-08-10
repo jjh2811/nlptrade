@@ -387,7 +387,7 @@ class EntityExtractor:
             entities["current_price_order"] or 
             entities["relative_price"] is not None):
             entities["order_type"] = "limit"
-        
+        print(entities)
         return entities
 
 
@@ -583,20 +583,34 @@ class TradeExecutor:
         """주어진 명령을 실행하고 결과를 JSON 호환 딕셔너리로 반환합니다."""
         logging.info(f"Executing command: {command}")
 
-        if not command.symbol:
-            logging.error("거래를 실행하려면 symbol이 반드시 필요합니다.")
-            return {"status": "error", "message": "Symbol is missing"}
+        if not command.symbol or not command.amount:
+            logging.error("거래를 실행하려면 symbol과 amount가 반드시 필요합니다.")
+            return {"status": "error", "message": "Symbol or amount is missing"}
 
-        # 여기에 실제 거래 로직을 추가할 수 있습니다.
-        # 예: exchange.create_order(command.symbol, command.order_type, command.intent, command.amount, command.price)
-        
-        command_dict = command.__dict__
+        try:
+            # create_order 메서드에 필요한 파라미터들을 준비합니다.
+            symbol = command.symbol
+            order_type = command.order_type
+            side = command.intent
+            amount = float(command.amount)
+            price = float(command.price) if command.price else None
 
-        result = {
-            "status": "success",
-            "command_executed": command_dict
-        }
-        return result
+            # 실제 주문을 실행합니다.
+            logging.info(f"Placing order: {side} {amount} {symbol} at price {price}")
+            order = self.exchange.create_order(symbol, order_type, side, amount, price)
+            logging.info(f"Successfully placed order: {order}")
+
+            return {
+                "status": "success",
+                "order_details": order
+            }
+
+        except ccxt.ExchangeError as e:
+            logging.error(f"Exchange error while executing command: {e}")
+            return {"status": "error", "message": f"Exchange error: {e}"}
+        except Exception as e:
+            logging.error(f"An unexpected error occurred: {e}")
+            return {"status": "error", "message": f"An unexpected error occurred: {e}"}
 
 
 def load_config(config_path: Path) -> Dict[str, Any]:
