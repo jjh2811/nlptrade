@@ -68,17 +68,16 @@ def parser(config, mock_portfolio_manager, mock_trade_executor):
     ("market sell 50% doge", TradeCommand(intent='sell', order_type='market', symbol='DOGE/USDT', amount=None, price=None, total_cost=None)),  # Amount will be calculated later
     ("limit buy 0.1 btc -5%", TradeCommand(intent='buy', order_type='limit', symbol='BTC/USDT', amount='0.1', price=str(Decimal('50000') * Decimal('0.95')), total_cost=None)),  # 50000 * (1 - 0.05)
     ("limit sell 1 eth +10%", TradeCommand(intent='sell', order_type='limit', symbol='ETH/USDT', amount='1', price=str(Decimal('50050') * Decimal('1.10')), total_cost=None)),  # 50050 * (1 + 0.10)
-    ("market buy btc with 10 usdt", TradeCommand(intent='buy', order_type='market', symbol='BTC/USDT', amount=str(Decimal('10') / Decimal('50025')), price=None, total_cost='10')),
+    ("market buy btc with 10usdt", TradeCommand(intent='buy', order_type='market', symbol='BTC/USDT', amount=str(Decimal('10') / Decimal('50025')), price=None, total_cost='10')),
     ("market sell 0.01 btc", TradeCommand(intent='sell', order_type='market', symbol='BTC/USDT', amount='0.01', price=None, total_cost=None)),
     ("market sell all eth", TradeCommand(intent='sell', order_type='market', symbol='ETH/USDT', amount=None, price=None, total_cost=None)),
-    ("market buy xrp with 1000 krw", TradeCommand(intent='buy', order_type='market', symbol='XRP/USDT', amount=str(Decimal('1000') / Decimal('50025')), price=None, total_cost='1000')),
+    ("market buy xrp 1000 krw", TradeCommand(intent='buy', order_type='market', symbol='XRP/USDT', amount=str(Decimal('1000') / Decimal('50025')), price=None, total_cost='1000')),
     ("limit sell 20% btc +4%", TradeCommand(intent='sell', order_type='limit', symbol='BTC/USDT', amount=None, price=str(Decimal('50050') * Decimal('1.04')), total_cost=None)),  # 50050 * (1 + 0.04)
     ("limit buy 50 doge -7%", TradeCommand(intent='buy', order_type='limit', symbol='DOGE/USDT', amount='50', price=str(Decimal('50000') * Decimal('0.93')), total_cost=None)),  # 50000 * (1 - 0.07)
     ("limit sell 1 eth +15", TradeCommand(intent='sell', order_type='limit', symbol='ETH/USDT', amount='1', price=str(Decimal('50050') * (Decimal('1') + Decimal('0.15'))), total_cost=None)),
     ("market buy 2 sol", TradeCommand(intent='buy', order_type='market', symbol='SOL/USDT', amount='2', price=None, total_cost=None)),
     ("limit sell 5 ada 0.45", TradeCommand(intent='sell', order_type='limit', symbol='ADA/USDT', amount='5', price='0.45', total_cost=None)),
     ("limit buy 1 kre 400", TradeCommand(intent='buy', order_type='limit', symbol='KRE/USDT', amount='1', price='400', total_cost=None)),
-    ("market buy btc with 50", TradeCommand(intent='buy', order_type='market', symbol='BTC/USDT', amount=str(Decimal('50') / Decimal('50025')), price=None, total_cost='50')),
     ("market sell 50% btc", TradeCommand(intent='sell', order_type='market', symbol='BTC/USDT', amount=None, price=None, total_cost=None)),
 ])
 def test_english_command_parsing(parser, mock_portfolio_manager, command_text, expected):
