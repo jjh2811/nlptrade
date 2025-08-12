@@ -209,8 +209,8 @@ class EntityExtractor:
         """텍스트에서 총 비용을 추출"""
         try:
             if is_english:
-                # 영문: "with X usdt" 패턴으로 추출
-                cost_match = re.search(r'with\s*(\d+(?:\.\d+)?)\s*(?:usdt|krw)?', text.lower())
+                # 영문: "10 usdt", "10krw" 등 '숫자 + 통화 단위' 패턴으로 추출
+                cost_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:usdt|dollar|krw|won)\b', text.lower())
                 if cost_match:
                     return Decimal(cost_match.group(1))
             else:
@@ -302,7 +302,7 @@ class EntityExtractor:
 
         # 이미 추출된 패턴들 제거 (상대 가격 패턴도 제거)
         patterns_to_remove = [
-            r'with\s*\d+(?:\.\d*)?\s*(?:usdt|krw)?',  # with X usdt/krw
+            r'\d+(?:\.\d*)?\s*(?:usdt|dollar|krw|won)\b',  # 10 usdt, 10krw 등
             r'[+-]\d+(?:\.\d*)?\s*%?'  # +5%, -10 등
         ]
         
