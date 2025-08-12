@@ -113,13 +113,23 @@ class EntityExtractor:
         """텍스트에서 코인 심볼 또는 한글 이름(별칭)을 추출"""
         # 영문/한글 공통: 영문 심볼 패턴으로 모든 잠재적 후보 추출
         symbol_pattern = rf'\b[A-Z0-9]{{2,{self.max_coin_len}}}(?![A-Z0-9])'
-        potential_symbols = re.findall(symbol_pattern, text.upper())
-        
-        # 찾은 후보들 중에서 유효한 코인이 있는지 확인
-        for symbol in potential_symbols:
+        potential_symbols_from_text = re.findall(symbol_pattern, text.upper())
+
+        # Filter out the quote currency from potential symbols if other symbols exist
+        filtered_potential_symbols = [
+            s for s in potential_symbols_from_text if s != self.quote_currency
+        ]
+
+        # Try to find a non-quote currency coin first
+        for symbol in filtered_potential_symbols:
             found_coin = self.find_closest_symbol(symbol)
             if found_coin:
                 return found_coin
+
+        # If no non-quote currency coin was found, and the quote currency was present
+        # as a potential symbol, then consider it only if it's the only one left.
+        if not filtered_potential_symbols and self.quote_currency in potential_symbols_from_text:
+            return self.quote_currency
 
         if not is_english:
             # 한글: 커스텀 매핑(별칭) 검색
@@ -129,7 +139,7 @@ class EntityExtractor:
                     found_coin = self.find_closest_symbol(coin_name)
                     if found_coin:
                         return found_coin
-        
+
         return None
 
     def _extract_amount(self, text: str, is_english: bool) -> Optional[Decimal]:
@@ -387,7 +397,6 @@ class EntityExtractor:
             entities["current_price_order"] or 
             entities["relative_price"] is not None):
             entities["order_type"] = "limit"
-        print(entities)
         return entities
 
 
@@ -405,11 +414,20 @@ class TradeCommandParser:
         """주어진 텍스트를 파싱하여 TradeCommand 객체로 변환합니다."""
         entities = self.extractor.extract_entities(text)
 
-        # 코인을 찾지 못했을 경우, 코인 목록을 갱신하고 다시 시도
+        # 코인을 찾지 못했을 경우 처리
         if not entities.get("coin"):
-            logging.warning(f"코인을 찾지 못했습니다: '{text}'. 코인 목록을 갱신하고 다시 시도합니다.")
-            self.extractor.refresh_coins(self.executor)
-            entities = self.extractor.extract_entities(text)
+            # 명령이 충분히 구체적일 때만 코인 목록을 갱신하고 다시 시도
+            # (의도와 수량 정보가 모두 있을 때)
+            if entities.get("intent") and (entities.get("amount") or entities.get("relative_amount") or entities.get("total_cost")):
+                logging.warning(f"코인을 찾지 못했습니다: '{text}'. 코인 목록을 갱신하고 다시 시도합니다.")
+                self.extractor.refresh_coins(self.executor)
+                entities = self.extractor.extract_entities(text)
+            else:
+                logging.warning(
+                    f"명령이 너무 모호하여 코인 목록 갱신을 건너뜁니다: '{text}'. "
+                    f"의도('{entities.get('intent')}') 또는 수량 정보가 부족합니다."
+                )
+                return None # 모호한 명령은 즉시 파싱 실패로 처리
 
         if not entities.get("intent") or not entities.get("coin"):
             logging.warning(

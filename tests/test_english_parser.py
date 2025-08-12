@@ -1,3 +1,4 @@
+
 import re
 from unittest.mock import MagicMock
 from decimal import Decimal
@@ -116,3 +117,35 @@ def test_english_command_parsing(parser, mock_portfolio_manager, command_text, e
         assert Decimal(result.total_cost) == pytest.approx(Decimal(expected.total_cost))
     else:
         assert result.total_cost is None
+
+
+def test_parse_unknown_coin_with_amount_triggers_refresh(config, mock_portfolio_manager, mock_trade_executor):
+    # Mock the extractor to track refresh_coins calls
+    extractor = EntityExtractor(config)
+    extractor.refresh_coins = MagicMock() # Mock the method
+    parser = TradeCommandParser(extractor, mock_portfolio_manager, mock_trade_executor)
+
+    # Command with unknown coin but clear intent and amount
+    command_text = "limit buy jin 10 usdt"
+    result = parser.parse(command_text)
+
+    # Assert that refresh_coins was called
+    extractor.refresh_coins.assert_called_once()
+    # Assert that parsing still fails as "jin" is not in the mocked config
+    assert result is None
+
+
+def test_parse_ambiguous_command_no_refresh(config, mock_portfolio_manager, mock_trade_executor):
+    # Mock the extractor to track refresh_coins calls
+    extractor = EntityExtractor(config)
+    extractor.refresh_coins = MagicMock() # Mock the method
+    parser = TradeCommandParser(extractor, mock_portfolio_manager, mock_trade_executor)
+
+    # Ambiguous command with unknown coin, unclear intent/amount
+    command_text = "limit jin 1"
+    result = parser.parse(command_text)
+
+    # Assert that refresh_coins was NOT called
+    extractor.refresh_coins.assert_not_called()
+    # Assert that parsing fails
+    assert result is None
