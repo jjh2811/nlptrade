@@ -549,6 +549,30 @@ class TradeCommandParser:
         )
 
 
+def format_trade_command_for_confirmation(command: TradeCommand) -> str:
+    """TradeCommand를 사용자가 확인하기 쉬운 문자열로 변환합니다."""
+    intent_kr = "매수" if command.intent == "buy" else "매도"
+    order_type_kr = "시장가" if command.order_type == "market" else "지정가"
+    
+    parts = [
+        "** 주문 확인 **",
+        f"  - 종류: {intent_kr}",
+        f"  - 코인: {command.symbol}",
+        f"  - 주문 유형: {order_type_kr}",
+    ]
+
+    if command.amount:
+        parts.append(f"  - 수량: {command.amount}")
+    
+    if command.price:
+        parts.append(f"  - 지정가: {command.price}")
+
+    if command.total_cost:
+        parts.append(f"  - 총 주문액: {command.total_cost}")
+        
+    return "\n".join(parts)
+
+
 class TradeExecutor:
     """
     `TradeCommand`를 거래소에 대해 실행합니다.
@@ -620,7 +644,7 @@ class TradeExecutor:
             # 실제 주문을 실행합니다.
             logging.info(f"Placing order: {side} {amount} {symbol} at price {price}")
             order = self.exchange.create_order(symbol, order_type, side, amount, price)
-            logging.info(f"Successfully placed order: {order}")
+            logging.info(f"Successfully placed order")
 
             return {
                 "status": "success",
@@ -775,8 +799,16 @@ def main():
 
             command = parser.parse(text)
             if command:
-                result = executor.execute(command)
-                print(f"[실행 결과]: {json.dumps(result, indent=2, ensure_ascii=False)}")
+                confirmation_message = format_trade_command_for_confirmation(command)
+                print(confirmation_message)
+                
+                user_input = input("이 주문을 실행하시겠습니까? (y/N): ").strip().lower()
+                
+                if user_input == 'y' or user_input == 'Y':
+                    result = executor.execute(command)
+                    print(f"[실행 결과]: {json.dumps(result, indent=2, ensure_ascii=False)}")
+                else:
+                    print("[실행 결과]: 주문이 취소되었습니다.")
             else:
                 print("[실행 결과]: 명령을 해석하지 못했습니다.")
 
