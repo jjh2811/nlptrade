@@ -539,11 +539,30 @@ class TradeCommandParser:
 
         market_symbol = f"{coin_symbol}/{self.executor.quote_currency}" if coin_symbol else None
 
+        # 거래소 정밀도에 맞게 가격 및 수량 조정
+        amount_to_format = final_amount
+        price_to_format = entities.get("price")
+
+        if market_symbol:
+            if amount_to_format is not None:
+                try:
+                    amount_to_format = self.executor.exchange.amount_to_precision(market_symbol, float(amount_to_format))
+                    logging.info(f"수량 정밀도 조정: 원본={final_amount}, 조정 후={amount_to_format}")
+                except Exception as e:
+                    logging.warning(f"수량 정밀도 조정 실패: {e}")
+            
+            if price_to_format is not None:
+                try:
+                    price_to_format = self.executor.exchange.price_to_precision(market_symbol, float(price_to_format))
+                    logging.info(f"가격 정밀도 조정: 원본={entities.get('price')}, 조정 후={price_to_format}")
+                except Exception as e:
+                    logging.warning(f"가격 정밀도 조정 실패: {e}")
+
         return TradeCommand(
             intent=str(entities["intent"]),
             symbol=market_symbol,
-            amount=str(final_amount) if final_amount is not None else None,
-            price=str(entities.get("price")) if entities.get("price") is not None else None,
+            amount=str(amount_to_format) if amount_to_format is not None else None,
+            price=str(price_to_format) if price_to_format is not None else None,
             order_type=str(entities["order_type"]),
             total_cost=str(total_cost) if total_cost is not None else None
         )
