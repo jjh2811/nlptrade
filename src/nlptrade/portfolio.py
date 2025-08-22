@@ -2,7 +2,7 @@ import logging
 from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, Optional
 
-from .types import Exchange
+from nlptrade.data_models import Exchange
 
 
 class PortfolioManager:

@@ -10,8 +10,8 @@ from decimal import Decimal, InvalidOperation
 import ccxt
 from ccxt.base.types import Num
 
-from .portfolio import PortfolioManager
-from .types import Exchange
+from nlptrade.portfolio import PortfolioManager
+from nlptrade.data_models import Exchange
 
 
 # 로깅 설정
